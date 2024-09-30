@@ -77,7 +77,7 @@ async def set(
 
     Returns:
         Optional[TOK]: If the value is successfully set, returns OK.
-            If value isn't set because of `set_condition`, returns None.
+            If `value` isn't set because of `set_condition`, returns None.
 
     Examples:
         >>> from glide import json as redisJson
@@ -99,7 +99,7 @@ async def get(
     key: TEncodable,
     paths: Optional[Union[TEncodable, List[TEncodable]]] = None,
     options: Optional[JsonGetOptions] = None,
-) -> Optional[bytes]:
+) -> TJsonResponse[Optional[bytes]]:
     """
     Retrieves the JSON value at the specified `paths` stored at `key`.
 
@@ -112,8 +112,20 @@ async def get(
         options (Optional[JsonGetOptions]): Options for formatting the byte representation of the JSON data. See `JsonGetOptions`.
 
     Returns:
-        bytes: A bytes representation of the returned value.
-            If `key` doesn't exists, returns None.
+        TJsonResponse[Optional[bytes]]:
+            If one path is given:
+                For JSONPath (path starts with `$`):
+                    Returns a stringified JSON list of bytes replies for every possible path,
+                    or a byte string representation of an empty array, if path doesn't exists.
+                    If `key` doesn't exist, returns None.
+                For legacy path (path doesn't start with `$`):
+                    Returns a byte string representation of the value in `path`.
+                    If `path` doesn't exist, an error is raised.
+                    If `key` doesn't exist, returns None.
+            If multiple paths are given:
+                Returns a stringified JSON object in bytes, in which each path is a key, and it's corresponding value, is the value as if the path was executed in the command as a single path.
+        In case of multiple paths, and `paths` are a mix of both JSONPath and legacy path, the command behaves as if all are JSONPath paths.
+        For more information about the returned type, see `TJsonResponse`.
 
     Examples:
         >>> from glide import json as redisJson
@@ -136,7 +148,7 @@ async def get(
             paths = [paths]
         args.extend(paths)
 
-    return cast(bytes, await client.custom_command(args))
+    return cast(TJsonResponse[Optional[bytes]], await client.custom_command(args))
 
 
 async def delete(
@@ -157,7 +169,7 @@ async def delete(
 
     Returns:
         int: The number of elements removed.
-        If `key` or path doesn't exist, returns 0.
+        If `key` or `path` doesn't exist, returns 0.
 
     Examples:
         >>> from glide import json as redisJson
@@ -194,7 +206,7 @@ async def forget(
 
     Returns:
         int: The number of elements removed.
-        If `key` or path doesn't exist, returns 0.
+        If `key` or `path` doesn't exist, returns 0.
 
     Examples:
         >>> from glide import json as redisJson
@@ -214,6 +226,105 @@ async def forget(
     )
 
 
+async def strappend(
+    client: TGlideClient,
+    key: TEncodable,
+    value: TEncodable,
+    path: Optional[TEncodable] = None,
+) -> TJsonResponse[int]:
+    """
+    Appends the specified `value` to the string stored at the specified `path` within the JSON document stored at `key`.
+
+    See https://redis.io/commands/json.strapped/ for more details.
+
+    Args:
+        client (TRedisClient): The Redis client to execute the command.
+        key (TEncodable): The key of the JSON document.
+        value (TEncodable): The value to append to the string. Must be wrapped with single quotes. For example, to append "foo", pass '"foo"'.
+        path (Optional[TEncodable]): The JSONPath to specify. Default is root `$`.
+
+    Returns:
+        TJsonResponse[int]:
+            For JSONPath (`path` starts with `$`):
+                Returns a list of integer replies for every possible path, indicating the length of the resulting string after appending `value`,
+                or None for JSON values matching the path that are not string.
+                If `key` doesn't exist, an error is raised.
+            For legacy path (`path` doesn't start with `$`):
+                Returns the length of the resulting string after appending `value` to the string at `path`.
+                If the JSON value at `path` is not a string of if `path` doesn't exist, an error is raised.
+                If `key` doesn't exist, an error is raised.
+        For more information about the returned type, see `TJsonResponse`.
+
+    Examples:
+        >>> from glide import json as redisJson
+        >>> import json
+        >>> await redisJson.set(client, "doc", "$", json.dumps({"a":"foo", "nested": {"a": "hello"}, "nested2": {"a": 31}}))
+            'OK'
+        >>> await redisJson.strappend(client, "doc", json.dumps("baz"), "$..a")
+            [6, 8, None]  # The new length of the string values at path '$..a' in the key stored at `doc` after the append operation.
+        >>> await redisJson.strappend(client, "doc", '"foo"', "nested.a")
+            11  # The length of the string value after appending "foo" to the string at path 'nested.array' in the key stored at `doc`.
+        >>> json.loads(await redisJson.get(client, json.dumps("doc"), "$"))
+            [{"a":"foobaz", "nested": {"a": "hellobazfoo"}, "nested2": {"a": 31}}] # The updated JSON value in the key stored at `doc`.
+    """
+
+    return cast(
+        TJsonResponse[int],
+        await client.custom_command(
+            ["JSON.STRAPPEND", key] + ([path, value] if path else [value])
+        ),
+    )
+
+
+async def strlen(
+    client: TGlideClient,
+    key: TEncodable,
+    path: Optional[TEncodable] = None,
+) -> TJsonResponse[Optional[int]]:
+    """
+    Returns the length of the JSON string value stored at the specified `path` within the JSON document stored at `key`.
+
+    See https://redis.io/commands/json.strlen/ for more details.
+
+    Args:
+        client (TRedisClient): The Redis client to execute the command.
+        key (TEncodable): The key of the JSON document.
+        path (Optional[TEncodable]): The JSONPath to specify.  Default is root `$`.
+
+    Returns:
+        TJsonResponse[Optional[int]]:
+            For JSONPath (`path` starts with `$`):
+                Returns a list of integer replies for every possible path, indicating the length of the JSON string value,
+                or None for JSON values matching the path that are not string. If `key` doesn't exist, an error is raised.
+            For legacy path (`path` doesn't start with `$`):
+                Returns the length of the JSON value at `path` or None if `key` doesn't exist.
+                If the JSON value at `path` is not a string of if `path` doesn't exist, an error is raised.
+                If `key` doesn't exist, None is returned.
+        For more information about the returned type, see `TJsonResponse`.
+
+    Examples:
+        >>> from glide import json as redisJson
+        >>> import json
+        >>> await redisJson.set(client, "doc", "$", json.dumps({"a":"foo", "nested": {"a": "hello"}, "nested2": {"a": 31}}))
+            'OK'
+        >>> await redisJson.strlen(client, "doc", "$..a")
+            [3, 5, None]  # The length of the string values at path '$..a' in the key stored at `doc`.
+        >>> await redisJson.strlen(client, "doc", "nested.a")
+            5  # The length of the JSON value at path 'nested.a' in the key stored at `doc`.
+        >>> await redisJson.strlen(client, "doc", "$")
+            [None]  # Returns an array with None since the value at root path does in the JSON document stored at `doc` is not a string.
+        >>> await redisJson.strlen(client, "non_existing_key", ".")
+            None  # `key` doesn't exist and the provided path is in legacy path syntax.
+    """
+
+    return cast(
+        TJsonResponse[Optional[int]],
+        await client.custom_command(
+            ["JSON.STRLEN", key, path] if path else ["JSON.STRLEN", key]
+        ),
+    )
+
+
 async def toggle(
     client: TGlideClient,
     key: TEncodable,
@@ -230,10 +341,15 @@ async def toggle(
         path (TEncodable): The JSONPath to specify.
 
     Returns:
-        TJsonResponse[bool]: For JSONPath (`path` starts with `$`), returns a list of boolean replies for every possible path, with the toggled boolean value,
-        or None for JSON values matching the path that are not boolean.
-        For legacy path (`path` doesn't starts with `$`), returns the value of the toggled boolean in `path`.
-        Note that when sending legacy path syntax, If `path` doesn't exist or the value at `path` isn't a boolean, an error is raised.
+        TJsonResponse[bool]:
+            For JSONPath (`path` starts with `$`):
+                Returns a list of boolean replies for every possible path, with the toggled boolean value,
+                or None for JSON values matching the path that are not boolean.
+                If `key` doesn't exist, an error is raised.
+            For legacy path (`path` doesn't start with `$`):
+                Returns the value of the toggled boolean in `path`.
+                If the JSON value at `path` is not a boolean of if `path` doesn't exist, an error is raised.
+                If `key` doesn't exist, an error is raised.
         For more information about the returned type, see `TJsonResponse`.
 
     Examples:
