@@ -220,12 +220,12 @@ class TestJson:
 
         assert await json.strlen(glide_client, key, "$.non_existing_path") == []
         with pytest.raises(RequestError):
-            assert await json.strlen(glide_client, key, ".non_existing_path")
+            await json.strlen(glide_client, key, ".non_existing_path")
 
         assert await json.strlen(glide_client, "non_exiting_key", ".") is None
 
         with pytest.raises(RequestError):
-            assert await json.strlen(glide_client, "non_exiting_key", "$")
+            await json.strlen(glide_client, "non_exiting_key", "$")
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -238,7 +238,7 @@ class TestJson:
         assert await json.strappend(glide_client, key, OuterJson.dumps("foo"), "a") == 9
 
         json_str = await json.get(glide_client, key, ".")
-        assert isinstance(json_str, str)
+        assert isinstance(json_str, bytes)
         assert OuterJson.loads(json_str) == {
             "a": "foobarfoo",
             "nested": {"a": "hellobar"},
@@ -250,12 +250,10 @@ class TestJson:
         ) == [None]
 
         with pytest.raises(RequestError):
-            assert await json.strappend(
-                glide_client, key, OuterJson.dumps("bar"), ".nested"
-            )
+            await json.strappend(glide_client, key, OuterJson.dumps("bar"), ".nested")
 
         with pytest.raises(RequestError):
-            assert await json.strappend(glide_client, key, OuterJson.dumps("bar"))
+            await json.strappend(glide_client, key, OuterJson.dumps("bar"))
 
         assert (
             await json.strappend(
@@ -264,11 +262,11 @@ class TestJson:
             == []
         )
         with pytest.raises(RequestError):
-            assert await json.strappend(
+            await json.strappend(
                 glide_client, key, OuterJson.dumps("try"), "non_existing_path"
             )
 
         with pytest.raises(RequestError):
-            assert await json.strappend(
+            await json.strappend(
                 glide_client, "non_exiting_key", OuterJson.dumps("try")
             )
