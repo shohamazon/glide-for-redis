@@ -223,9 +223,7 @@ class TestJson:
             await json.strlen(glide_client, key, ".non_existing_path")
 
         assert await json.strlen(glide_client, "non_exiting_key", ".") is None
-
-        with pytest.raises(RequestError):
-            await json.strlen(glide_client, "non_exiting_key", "$")
+        assert await json.strlen(glide_client, "non_exiting_key", "$") is None
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])

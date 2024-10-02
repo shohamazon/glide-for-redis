@@ -251,6 +251,7 @@ async def strappend(
                 If `key` doesn't exist, an error is raised.
             For legacy path (`path` doesn't start with `$`):
                 Returns the length of the resulting string after appending `value` to the string at `path`.
+                If multiple paths match, the length of the last updated string is returned.
                 If the JSON value at `path` is not a string of if `path` doesn't exist, an error is raised.
                 If `key` doesn't exist, an error is raised.
         For more information about the returned type, see `TJsonResponse`.
@@ -295,11 +296,12 @@ async def strlen(
         TJsonResponse[Optional[int]]:
             For JSONPath (`path` starts with `$`):
                 Returns a list of integer replies for every possible path, indicating the length of the JSON string value,
-                or None for JSON values matching the path that are not string. If `key` doesn't exist, an error is raised.
+                or None for JSON values matching the path that are not string.
             For legacy path (`path` doesn't start with `$`):
                 Returns the length of the JSON value at `path` or None if `key` doesn't exist.
+                If multiple paths match, the length of the first mached string is returned.
                 If the JSON value at `path` is not a string of if `path` doesn't exist, an error is raised.
-                If `key` doesn't exist, None is returned.
+            If `key` doesn't exist, None is returned.
         For more information about the returned type, see `TJsonResponse`.
 
     Examples:
@@ -314,7 +316,7 @@ async def strlen(
         >>> await redisJson.strlen(client, "doc", "$")
             [None]  # Returns an array with None since the value at root path does in the JSON document stored at `doc` is not a string.
         >>> await redisJson.strlen(client, "non_existing_key", ".")
-            None  # `key` doesn't exist and the provided path is in legacy path syntax.
+            None  # `key` doesn't exist.
     """
 
     return cast(
