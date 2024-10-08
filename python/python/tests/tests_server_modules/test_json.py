@@ -144,41 +144,77 @@ class TestJson:
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
-    async def test_del(self, glide_client: TGlideClient):
+    async def test_json_del(self, glide_client: TGlideClient):
         key = get_random_string(5)
 
         json_value = {"a": 1.0, "b": {"a": 1, "b": 2.5, "c": True}}
         assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
 
+        # Non-exiseting paths
+        assert await json.delete(glide_client, key, "$..path") == 0
+        assert await json.delete(glide_client, key, "..path") == 0
+
         assert await json.delete(glide_client, key, "$..a") == 2
         assert await json.get(glide_client, key, "$..a") == b"[]"
+
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+
+        assert await json.delete(glide_client, key, "..a") == 2
+        with pytest.raises(RequestError):
+            assert await json.get(glide_client, key, "..a")
 
         result = await json.get(glide_client, key, "$")
         assert isinstance(result, bytes)
         assert OuterJson.loads(result) == [{"b": {"b": 2.5, "c": True}}]
 
         assert await json.delete(glide_client, key, "$") == 1
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+        assert await json.delete(glide_client, key, ".") == 1
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+        assert await json.delete(glide_client, key) == 1
         assert await json.delete(glide_client, key) == 0
         assert await json.get(glide_client, key, "$") == None
 
+        # Non-existing keys
+        assert await json.delete(glide_client, "non_existing_key", "$") == 0
+        assert await json.delete(glide_client, "non_existing_key", ".") == 0
+
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
-    async def test_forget(self, glide_client: TGlideClient):
+    async def test_json_forget(self, glide_client: TGlideClient):
         key = get_random_string(5)
 
         json_value = {"a": 1.0, "b": {"a": 1, "b": 2.5, "c": True}}
         assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
 
+        # Non-exiseting paths
+        assert await json.forget(glide_client, key, "$..path") == 0
+        assert await json.forget(glide_client, key, "..path") == 0
+
         assert await json.forget(glide_client, key, "$..a") == 2
         assert await json.get(glide_client, key, "$..a") == b"[]"
+
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+
+        assert await json.forget(glide_client, key, "..a") == 2
+        with pytest.raises(RequestError):
+            assert await json.get(glide_client, key, "..a")
 
         result = await json.get(glide_client, key, "$")
         assert isinstance(result, bytes)
         assert OuterJson.loads(result) == [{"b": {"b": 2.5, "c": True}}]
 
         assert await json.forget(glide_client, key, "$") == 1
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+        assert await json.forget(glide_client, key, ".") == 1
+        assert await json.set(glide_client, key, "$", OuterJson.dumps(json_value)) == OK
+        assert await json.forget(glide_client, key) == 1
         assert await json.forget(glide_client, key) == 0
         assert await json.get(glide_client, key, "$") == None
+
+        # Non-existing keys
+        assert await json.forget(glide_client, "non_existing_key", "$") == 0
+        assert await json.forget(glide_client, "non_existing_key", ".") == 0
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
