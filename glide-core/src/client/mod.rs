@@ -368,6 +368,31 @@ impl Client {
         Self::convert_transaction_values_to_expected_types(pipeline, values, command_count)
     }
 
+    fn get_pipeline_values(
+        pipeline: &redis::Pipeline,
+        values: Vec<Value>,
+        command_count: usize,
+        offset: usize,
+    ) -> RedisResult<Value> {
+        let mut result_values = Vec::with_capacity(values.len());
+
+        for value in values {
+            match value {
+                Value::Array(values) => {
+                    result_values.extend(values);
+                }
+                Value::Nil => {
+                    return Ok(Value::Nil);
+                }
+                value => {
+                    result_values.push(value);
+                }
+            }
+        }
+
+        Self::convert_transaction_values_to_expected_types(pipeline, result_values, command_count)
+    }
+
     fn convert_transaction_values_to_expected_types(
         pipeline: &redis::Pipeline,
         values: Vec<Value>,
@@ -409,6 +434,32 @@ impl Client {
             }?;
 
             Self::get_transaction_values(pipeline, values, command_count, offset)
+        })
+        .boxed()
+    }
+
+    pub fn send_pipeline<'a>(
+        &'a mut self,
+        pipeline: &'a redis::Pipeline,
+    ) -> redis::RedisFuture<'a, Value> {
+        let command_count = pipeline.cmd_iter().count();
+        let offset = command_count + 1;
+        println!("request timeout is {:?}", self.request_timeout);
+
+        run_with_timeout(Some(self.request_timeout), async move {
+            // is this true?
+            let values = match self.internal_client {
+                ClientWrapper::Standalone(ref mut client) => {
+                    client.send_pipeline(pipeline, 0, command_count).await
+                }
+
+                ClientWrapper::Cluster { ref mut client } => {
+                    println!("cluster mode");
+                    client.req_packed_commands(pipeline, 0, command_count).await
+                }
+            }?;
+
+            Self::get_pipeline_values(pipeline, values, command_count, offset)
         })
         .boxed()
     }

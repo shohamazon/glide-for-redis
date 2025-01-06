@@ -277,6 +277,10 @@ where
         count: usize,
         route: SingleNodeRoutingInfo,
     ) -> RedisResult<Vec<Value>> {
+        /*println!(
+            "Starting route_pipeline - offset: {}, count: {}, route: {:?}",
+            offset, count, route
+        );*/
         let (sender, receiver) = oneshot::channel();
         self.0
             .send(Message {
@@ -641,24 +645,56 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
 
     // Find first specific slot and send to it. There's no need to check If later commands
     // should be routed to a different slot, since the server will return an error indicating this.
-    pipeline.cmd_iter().map(route_for_command).try_fold(
-        None,
-        |chosen_route, next_cmd_route| match (chosen_route, next_cmd_route) {
-            (None, _) => Ok(next_cmd_route),
-            (_, None) => Ok(chosen_route),
-            (Some(chosen_route), Some(next_cmd_route)) => {
-                if chosen_route.slot() != next_cmd_route.slot() {
-                    Err((ErrorKind::CrossSlot, "Received crossed slots in pipeline").into())
-                } else if chosen_route.slot_addr() == SlotAddr::ReplicaOptional {
-                    Ok(Some(next_cmd_route))
-                } else {
-                    Ok(Some(chosen_route))
+    if pipeline.is_atomic() {
+        pipeline
+            .cmd_iter()
+            .map(route_for_command)
+            .try_fold(None, |chosen_route, next_cmd_route| {
+                match (chosen_route, next_cmd_route) {
+                    (None, _) => Ok(next_cmd_route),
+                    (_, None) => Ok(chosen_route),
+                    (Some(chosen_route), Some(next_cmd_route)) => {
+                        if chosen_route.slot() != next_cmd_route.slot() {
+                            Err((
+                                ErrorKind::CrossSlot,
+                                "Received crossed slots in transaction",
+                            )
+                                .into())
+                        } else {
+                            Ok(Some(chosen_route))
+                        }
+                    }
                 }
-            }
-        },
-    )
-}
+            })
+    } else {
+        // For non-atomic pipelines: allow different slots, take first routable command's slot
+        let result = Ok(pipeline.cmd_iter().find_map(|cmd| {
+            println!("Processing command: {:?}", cmd);
 
+            let routing_info = cluster_routing::RoutingInfo::for_routable(cmd);
+            println!("Routing info: {:?}", routing_info);
+
+            routing_info.and_then(|info| match info {
+                cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
+                    route,
+                )) => {
+                    println!("Found specific route: {:?}", route);
+                    Some(route)
+                }
+                cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary) => {
+                    println!("Using random primary route");
+                    Some(Route::new_random_primary())
+                }
+                other => {
+                    println!("Other routing type: {:?}", other);
+                    None
+                }
+            })
+        }));
+        println!("Final routing result: {:?}", result);
+        result
+    }
+}
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
     Box::pin(tokio::time::sleep(duration))
 }
@@ -2131,10 +2167,22 @@ where
         count: usize,
         conn: impl Future<Output = RedisResult<(String, C)>>,
     ) -> OperationResult {
-        trace!("try_pipeline_request");
-        let (address, mut conn) = conn.await.map_err(|err| (OperationTarget::NotFound, err))?;
-        conn.req_packed_commands(&pipeline, offset, count)
-            .await
+        println!(
+            "Starting try_pipeline_request with offset: {}, count: {}",
+            offset, count
+        );
+
+        let connection_result = conn.await;
+        //println!("Connection attempt result: {:?}", connection_result);
+
+        let (address, mut conn) =
+            connection_result.map_err(|err| (OperationTarget::NotFound, err))?;
+        println!("Got connection for address: {}", address);
+
+        let pipeline_result = conn.req_packed_commands(&pipeline, offset, count).await;
+        println!("Pipeline execution result: {:?}", pipeline_result);
+
+        pipeline_result
             .map(Response::Multiple)
             .map_err(|err| (OperationTarget::Node { address }, err))
     }
@@ -2148,13 +2196,22 @@ where
                 count,
                 route,
             } => {
-                Self::try_pipeline_request(
+                println!(
+                    "Processing pipeline request - offset: {}, count: {}",
+                    offset, count
+                );
+                //println!("Pipeline route: {:?}", route.into());
+
+                let result = Self::try_pipeline_request(
                     pipeline,
                     offset,
                     count,
-                    Self::get_connection(route, core, None),
+                    Self::get_connection(route, core, None), // how do we route each request
                 )
-                .await
+                .await;
+
+                println!("Pipeline request completed with result: {:?}", result);
+                result
             }
             CmdArg::ClusterScan {
                 cluster_scan_args, ..
@@ -2751,10 +2808,20 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("hereee6");
+
         async move {
+            println!(
+                "Starting req_packed_commands with offset: {}, count: {}",
+                offset, count
+            );
             let route = route_for_pipeline(pipeline)?;
-            self.route_pipeline(pipeline, offset, count, route.into())
-                .await
+            println!("Pipeline routing determined: {:?}", route);
+            let result = self
+                .route_pipeline(pipeline, offset, count, route.into())
+                .await;
+            println!("Pipeline execution completed with result: {:?}", result);
+            result
         }
         .boxed()
     }

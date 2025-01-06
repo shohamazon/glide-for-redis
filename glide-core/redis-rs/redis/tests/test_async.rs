@@ -141,6 +141,9 @@ mod basic_async {
     }
 
     #[test]
+    fn test_pipeline() {}
+
+    #[test]
     fn test_pipeline_transaction() {
         let ctx = TestContext::new();
         block_on_all(async move {

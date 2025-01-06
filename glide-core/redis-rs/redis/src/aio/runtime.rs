@@ -37,13 +37,26 @@ impl Runtime {
         &self,
         duration: Duration,
         future: F,
-    ) -> Result<F::Output, Elapsed> {
-        match self {
+    ) -> Result<F::Output, Elapsed>
+    where
+        F::Output: std::fmt::Debug,
+    {
+        //println!("Starting timeout with duration: {:?}", duration);
+
+        let result = match self {
             #[cfg(feature = "tokio-comp")]
             Runtime::Tokio => ::tokio::time::timeout(duration, future)
                 .await
                 .map_err(|_| Elapsed(())),
+        };
+
+        if result.is_err() {
+            println!(
+                "Timeout completed with result err: {:?}",
+                result.as_ref().unwrap_err()
+            );
         }
+        result
     }
 }
 

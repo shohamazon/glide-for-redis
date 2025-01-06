@@ -19,7 +19,7 @@ use redis::cluster_routing::{
     MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
 };
 use redis::cluster_routing::{ResponsePolicy, Routable};
-use redis::{ClusterScanArgs, Cmd, PushInfo, RedisError, ScanStateRC, Value};
+use redis::{ClusterScanArgs, Cmd, Pipeline, PushInfo, RedisError, ScanStateRC, Value};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -549,15 +549,85 @@ fn handle_request(request: CommandRequest, mut client: Client, writer: Rc<Writer
     });
 }
 
+fn handle_pipeline(
+    pipeline: Pipeline,
+    mut client: Client,
+    callback_indices: Vec<u32>,
+    writer: Rc<Writer>,
+) {
+    task::spawn_local(async move {
+        let mut updated_inflight_counter = true;
+        let client_clone = client.clone();
+
+        let result = match client.reserve_inflight_request() {
+            false => {
+                updated_inflight_counter = false;
+                Err(ClientUsageError::User(
+                    "Reached maximum inflight requests".to_string(),
+                ))
+            }
+            true => client
+                .send_pipeline(&pipeline)
+                .await
+                .map_err(|err| err.into()),
+        };
+
+        if updated_inflight_counter {
+            client_clone.release_inflight_request();
+        }
+
+        println!("Result is: {result:?}");
+
+        match result {
+            Ok(Value::Array(results)) => {
+                for (result, callback_idx) in results.into_iter().zip(callback_indices.iter()) {
+                    let _res = write_result(Ok(result), *callback_idx, &writer).await;
+                }
+            }
+            Ok(other) => {
+                // Handle unexpected non-array response
+                for callback_idx in callback_indices {
+                    let _res = write_result(Ok(other.clone()), callback_idx, &writer).await;
+                }
+            }
+            Err(err) => {
+                // Handle error case
+                for callback_idx in callback_indices {
+                    // let _res = write_result(Err(err.clone()), callback_idx, &writer).await;
+                }
+            }
+        }
+    });
+}
 async fn handle_requests(
     received_requests: Vec<CommandRequest>,
     client: &Client,
     writer: &Rc<Writer>,
 ) {
-    for request in received_requests {
-        handle_request(request, client.clone(), writer.clone());
+    let mut pipeline = redis::Pipeline::with_capacity(received_requests.len());
+    let mut callback_indices = Vec::new();
+
+    for command in received_requests {
+        match &command.command {
+            Some(command_request::Command::SingleCommand(cmd)) => match get_redis_command(cmd) {
+                Ok(redis_cmd) => {
+                    pipeline.add_command(redis_cmd);
+                    callback_indices.push(command.callback_idx);
+                }
+                Err(_) => {
+                    handle_request(command, client.clone(), writer.clone());
+                }
+            },
+            _ => {
+                handle_request(command, client.clone(), writer.clone());
+            }
+        }
     }
-    // Yield to ensure that the subtasks aren't starved.
+
+    if pipeline.cmd_iter().count() > 0 {
+        handle_pipeline(pipeline, client.clone(), callback_indices, writer.clone());
+    }
+
     task::yield_now().await;
 }
 
@@ -610,6 +680,7 @@ async fn read_values_loop(
                 return reason;
             }
             ReceivedValues(received_requests) => {
+                println!("new recieved requests: {received_requests:?}");
                 handle_requests(received_requests, client, &writer).await;
             }
         }
