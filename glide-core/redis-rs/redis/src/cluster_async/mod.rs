@@ -2175,6 +2175,8 @@ where
             offset, count
         );
 
+        println!("pipeline is: {:?}", pipeline.get_cmds());
+
         let connection_result = conn.await;
         //println!("Connection attempt result: {:?}", connection_result);
 
@@ -2450,81 +2452,101 @@ where
                         Self::routes_pipeline_commands(&pipeline, core.clone())
                             .await
                             .map_err(|err| (OperationTarget::FanOut, err))?;
-                    let mut final_responses: Vec<Vec<Value>> = Vec::with_capacity(pipeline.len());
+                    // Wrap `values_and_adresses` in an Arc<Mutex<...>> for thread-safe access
+                    let values_and_adresses =
+                        Arc::new(Mutex::new(vec![Vec::new(); pipeline.len()]));
+                    let mut final_responses: Vec<Value> = Vec::with_capacity(pipeline.len());
+                    let mut join_set = tokio::task::JoinSet::new(); // Manage spawned tasks
 
                     for (address, (pipeline, conn, indices)) in pipelines_by_connection {
                         println!("Processing pipeline for address: {}", address.clone());
+
+                        let address_for_future = address.clone();
                         let future = Self::try_pipeline_request(
                             Arc::new(pipeline.clone()),
                             0,
                             pipeline.clone().len(),
-                            async move { Ok((address.clone(), conn)) },
+                            async move { Ok((address_for_future.clone(), conn)) },
                         );
-                        let mut final_responses_clone = final_responses.clone();
-                        tokio::spawn(async move {
+
+                        // Clone `values_and_adresses` for the async task
+                        let values_and_adresses_clone = values_and_adresses.clone();
+                        let address_for_spawn = address.clone();
+
+                        // Spawn the async task
+                        join_set.spawn(async move {
                             let result = future.await;
                             if let Ok(Response::Multiple(values)) = result {
+                                println!("In if");
                                 for (index, value) in indices.iter().zip(values) {
-                                    if let Some(response_vec) =
-                                        final_responses_clone.get_mut(*index)
-                                    {
-                                        response_vec.push(value);
+                                    // Acquire lock to safely access `values_and_adresses`
+                                    let mut lock = values_and_adresses_clone.lock().unwrap();
+                                    if let Some(response_vec) = lock.get_mut(*index) {
+                                        response_vec.push((value, address_for_spawn.clone()));
+                                    } else {
+                                        println!("Index out of bounds: {index}");
                                     }
                                 }
+                            } else {
+                                println!("In else");
+                                // TODO: error handling
                             }
                         });
+
+                        println!("final_responses is {:?}", final_responses.clone());
                     }
+
+                    // Wait for all spawned tasks to complete
+                    while let Some(_) = join_set.join_next().await {}
+
+                    // Process response_policies after all tasks are complete
                     for (index, routing, response_policy) in response_policies {
+                        // Safely access `values_and_adresses` for the current index
+                        let values_with_adresses = {
+                            let lock = values_and_adresses.lock().unwrap();
+                            lock[index].clone()
+                        };
+
+                        println!("values with adresses: {values_with_adresses:?}");
+
                         let receivers: Vec<(
                             Option<String>,
                             oneshot::Receiver<Result<Response, types::RedisError>>,
-                        )> = match routing.clone() {
-                            MultipleNodeRoutingInfo::AllNodes => core
-                                .conn_lock
-                                .read()
-                                .expect(MUTEX_WRITE_ERR)
-                                .all_node_connections()
-                                .map(|(add, _conn)| {
-                                    let (sender, receiver) = oneshot::channel();
-                                    (Some(add.clone()), receiver)
-                                })
-                                .collect(),
-                            MultipleNodeRoutingInfo::AllMasters => core
-                                .conn_lock
-                                .read()
-                                .expect(MUTEX_WRITE_ERR)
-                                .all_primary_connections()
-                                .map(|(add, _conn)| {
-                                    let (sender, receiver) = oneshot::channel();
-                                    (Some(add.clone()), receiver)
-                                })
-                                .collect(),
-                            MultipleNodeRoutingInfo::MultiSlot((slots, _)) => slots
-                                .iter()
-                                .flat_map(|(route, _indices)| {
-                                    core.conn_lock
-                                        .read()
-                                        .expect(MUTEX_WRITE_ERR)
-                                        .connection_for_route(route)
-                                        .map(|(add, _conn)| {
-                                            let (sender, receiver) = oneshot::channel();
-                                            (Some(add.clone()), receiver)
-                                        })
-                                })
-                                .collect(),
-                        };
+                        )> = values_with_adresses
+                            .iter()
+                            .map(|(value, addr)| {
+                                let (sender, receiver) = oneshot::channel();
+                                let _ = sender.send(Ok(Response::Single(value.clone()))); //TODO: handle error
+                                (Some(addr.clone()), receiver)
+                            })
+                            .collect();
+
+                        println!("response policy {response_policy:?}");
+
                         let r = Self::aggregate_results(receivers, &routing, response_policy)
                             .await
                             .map_err(|err| (OperationTarget::FanOut, err))?;
 
-                        if let Some(response_vec) = final_responses.get_mut(index) {
-                            response_vec.push(r);
+                        println!("r is: {r:?}");
+
+                        // Update `values_and_adresses` for the current index
+                        {
+                            let mut lock = values_and_adresses.lock().unwrap();
+                            lock[index] = vec![(r, "".to_string())];
                         }
                     }
 
-                    Ok(Response::Multiple(
-                        final_responses.into_iter().flatten().collect(),
-                    ))
+                    // Collect final responses
+                    for ans in values_and_adresses.lock().unwrap().iter() {
+                        assert_eq!(ans.len(), 1);
+                        if let Some((res, _)) = ans.clone().pop() {
+                            final_responses.push(res);
+                        }
+                    }
+
+                    println!("Final response is: {final_responses:?}");
+
+                    Ok(Response::Multiple(final_responses))
                 }
             }
 
@@ -2537,8 +2559,7 @@ where
                     Ok((scan_state_ref, values)) => {
                         Ok(Response::ClusterScanResult(scan_state_ref, values))
                     }
-                    // TODO: After routing issues with sending to random node on not-key based commands are resolved,
-                    // this error should be handled in the same way as other errors and not fan-out.
+
                     Err(err) => Err((OperationTarget::FanOut, err)),
                 }
             }

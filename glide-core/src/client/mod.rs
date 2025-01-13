@@ -378,9 +378,9 @@ impl Client {
 
         for value in values {
             match value {
-                Value::Array(values) => {
+                /*Value::Array(values) => {
                     result_values.extend(values);
-                }
+                }*/
                 Value::Nil => {
                     return Ok(Value::Nil);
                 }
