@@ -38,6 +38,11 @@ pub struct Pipeline {
 impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
+    ///
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
     pub fn new() -> Pipeline {
         Self::with_capacity(0)
     }

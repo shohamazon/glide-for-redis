@@ -2223,12 +2223,12 @@ where
         for (index, cmd) in pipeline.cmd_iter().enumerate() {
             match cluster_routing::RoutingInfo::for_routable(cmd) {
                 Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                    let mut connections_container: std::sync::RwLockWriteGuard<
-                        '_,
-                        connections_container::ConnectionsContainer<
-                            future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
-                        >,
-                    > = core.conn_lock.write().expect(MUTEX_WRITE_ERR);
+                    // let mut connections_container: std::sync::RwLockWriteGuard<
+                    //     '_,
+                    //     connections_container::ConnectionsContainer<
+                    //         future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
+                    //     >,
+                    // > = core.conn_lock.write().expect(MUTEX_WRITE_ERR);
                     if pipelines_by_connection.is_empty() {
                         let conn = crate::cluster_async::ClusterConnInner::get_connection(
                             SingleNodeRoutingInfo::Random.into(),
@@ -2328,13 +2328,13 @@ where
 
                     match multi_node_routing {
                         MultipleNodeRoutingInfo::AllNodes => {
+                            let all_conns: Vec<_> = {
+                                // TODO: remove extra copy
+                                let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
+                                lock.all_node_connections().collect()
+                            };
                             // Route to all nodes
-                            for (address, conn) in core
-                                .conn_lock
-                                .read()
-                                .expect(MUTEX_READ_ERR)
-                                .all_node_connections()
-                            {
+                            for (address, conn) in all_conns {
                                 Self::add_command_to_pipeline_map(
                                     &mut pipelines_by_connection,
                                     address,
@@ -2346,12 +2346,12 @@ where
                         }
                         MultipleNodeRoutingInfo::AllMasters => {
                             // Route to all master nodes
-                            for (address, conn) in core
-                                .conn_lock
-                                .read()
-                                .expect(MUTEX_READ_ERR)
-                                .all_primary_connections()
-                            {
+                            let primaries: Vec<_> = {
+                                // TODO: remove extra copy
+                                let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
+                                lock.all_primary_connections().collect()
+                            };
+                            for (address, conn) in primaries {
                                 Self::add_command_to_pipeline_map(
                                     &mut pipelines_by_connection,
                                     address,
@@ -2363,13 +2363,13 @@ where
                         }
                         MultipleNodeRoutingInfo::MultiSlot((slots, _)) => {
                             // Route to multiple slots
+
                             for (route, indices) in slots {
-                                if let Some((address, conn)) = core
-                                    .conn_lock
-                                    .read()
-                                    .expect(MUTEX_READ_ERR)
-                                    .connection_for_route(&route)
-                                {
+                                let conn = {
+                                    let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
+                                    lock.connection_for_route(&route)
+                                };
+                                if let Some((address, conn)) = conn {
                                     let new_cmd =
                                         crate::cluster_routing::command_for_multi_slot_indices(
                                             cmd,
@@ -2475,39 +2475,41 @@ where
                         });
                     }
                     for (index, routing, response_policy) in response_policies {
-                        let mut connections_container: std::sync::RwLockWriteGuard<
-                            '_,
-                            connections_container::ConnectionsContainer<
-                                future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
-                            >,
-                        > = core.conn_lock.write().expect(MUTEX_WRITE_ERR);
                         let receivers: Vec<(
                             Option<String>,
                             oneshot::Receiver<Result<Response, types::RedisError>>,
                         )> = match routing.clone() {
-                            MultipleNodeRoutingInfo::AllNodes => connections_container
+                            MultipleNodeRoutingInfo::AllNodes => core
+                                .conn_lock
+                                .read()
+                                .expect(MUTEX_WRITE_ERR)
                                 .all_node_connections()
                                 .map(|(add, _conn)| {
                                     let (sender, receiver) = oneshot::channel();
-                                    (Some(add), receiver)
+                                    (Some(add.clone()), receiver)
                                 })
                                 .collect(),
-                            MultipleNodeRoutingInfo::AllMasters => connections_container
+                            MultipleNodeRoutingInfo::AllMasters => core
+                                .conn_lock
+                                .read()
+                                .expect(MUTEX_WRITE_ERR)
                                 .all_primary_connections()
                                 .map(|(add, _conn)| {
                                     let (sender, receiver) = oneshot::channel();
-                                    (Some(add), receiver)
+                                    (Some(add.clone()), receiver)
                                 })
                                 .collect(),
                             MultipleNodeRoutingInfo::MultiSlot((slots, _)) => slots
                                 .iter()
                                 .flat_map(|(route, _indices)| {
-                                    connections_container.connection_for_route(route).map(
-                                        |(add, _conn)| {
+                                    core.conn_lock
+                                        .read()
+                                        .expect(MUTEX_WRITE_ERR)
+                                        .connection_for_route(route)
+                                        .map(|(add, _conn)| {
                                             let (sender, receiver) = oneshot::channel();
-                                            (Some(add), receiver)
-                                        },
-                                    )
+                                            (Some(add.clone()), receiver)
+                                        })
                                 })
                                 .collect(),
                         };
