@@ -2175,8 +2175,6 @@ where
             offset, count
         );
 
-        println!("pipeline is: {:?}", pipeline.get_cmds());
-
         let connection_result = conn.await;
         //println!("Connection attempt result: {:?}", connection_result);
 
@@ -2452,9 +2450,12 @@ where
                         Self::routes_pipeline_commands(&pipeline, core.clone())
                             .await
                             .map_err(|err| (OperationTarget::FanOut, err))?;
-                    // Wrap `values_and_adresses` in an Arc<Mutex<...>> for thread-safe access
+                    // Wrap `values_and_adresses` and `errors` in Arc<Mutex<...>> for thread-safe access
                     let values_and_adresses =
                         Arc::new(Mutex::new(vec![Vec::new(); pipeline.len()]));
+                    use std::sync::{Arc, Mutex};
+
+                    let first_error = Arc::new(Mutex::new(None));
                     let mut final_responses: Vec<Value> = Vec::with_capacity(pipeline.len());
                     let mut join_set = tokio::task::JoinSet::new(); // Manage spawned tasks
 
@@ -2469,27 +2470,48 @@ where
                             async move { Ok((address_for_future.clone(), conn)) },
                         );
 
-                        // Clone `values_and_adresses` for the async task
+                        // Clone `values_and_adresses` and `errors` for the async task
                         let values_and_adresses_clone = values_and_adresses.clone();
+                        // let errors_clone = errors.clone();
                         let address_for_spawn = address.clone();
+                        let first_error = Arc::clone(&first_error);
 
                         // Spawn the async task
                         join_set.spawn(async move {
-                            let result = future.await;
-                            if let Ok(Response::Multiple(values)) = result {
-                                println!("In if");
-                                for (index, value) in indices.iter().zip(values) {
-                                    // Acquire lock to safely access `values_and_adresses`
-                                    let mut lock = values_and_adresses_clone.lock().unwrap();
-                                    if let Some(response_vec) = lock.get_mut(*index) {
-                                        response_vec.push((value, address_for_spawn.clone()));
-                                    } else {
-                                        println!("Index out of bounds: {index}");
+                            let result: Result<Response, (OperationTarget, RedisError)> =
+                                future.await;
+                            match result {
+                                Ok(Response::Multiple(values)) => {
+                                    println!("In match - Multiple");
+                                    for (index, value) in indices.iter().zip(values) {
+                                        let mut lock = values_and_adresses_clone.lock().unwrap();
+                                        if let Some(response_vec) = lock.get_mut(*index) {
+                                            response_vec.push((value, address_for_spawn.clone()));
+                                        } else {
+                                            println!("Index out of bounds: {index}");
+                                        }
                                     }
                                 }
-                            } else {
-                                println!("In else");
-                                // TODO: error handling
+                                Ok(_) => {
+                                    let mut error_lock = first_error.lock().unwrap();
+                                    if error_lock.is_none() {
+                                        *error_lock = Some((
+                                            OperationTarget::FanOut,
+                                            RedisError::from((
+                                                ErrorKind::ResponseError,
+                                                "Unsupported response type",
+                                            )),
+                                        ));
+                                    }
+                                }
+                                Err(err) => {
+                                    println!("In match - Different response type");
+                                    // TODO: handle other response types
+                                    let mut error_lock = first_error.lock().unwrap();
+                                    if error_lock.is_none() {
+                                        *error_lock = Some(err);
+                                    }
+                                }
                             }
                         });
 
@@ -2498,6 +2520,11 @@ where
 
                     // Wait for all spawned tasks to complete
                     while let Some(_) = join_set.join_next().await {}
+
+                    // Check for errors
+                    if let Some(first_error) = first_error.lock().unwrap().take() {
+                        return Err(first_error);
+                    }
 
                     // Process response_policies after all tasks are complete
                     for (index, routing, response_policy) in response_policies {
@@ -2516,7 +2543,7 @@ where
                             .iter()
                             .map(|(value, addr)| {
                                 let (sender, receiver) = oneshot::channel();
-                                let _ = sender.send(Ok(Response::Single(value.clone()))); //TODO: handle error
+                                let _ = sender.send(Ok(Response::Single(value.clone())));
                                 (Some(addr.clone()), receiver)
                             })
                             .collect();
