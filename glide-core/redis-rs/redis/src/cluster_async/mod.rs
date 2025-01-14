@@ -670,32 +670,7 @@ fn route_for_pipeline(pipeline: &crate::Pipeline) -> RedisResult<Option<Route>> 
                 }
             })
     } else {
-        // For non-atomic pipelines: allow different slots, take first routable command's slot
-        let result = Ok(pipeline.cmd_iter().find_map(|cmd| {
-            println!("Processing command: {:?}", cmd);
-
-            let routing_info = cluster_routing::RoutingInfo::for_routable(cmd);
-            println!("Routing info: {:?}", routing_info);
-
-            routing_info.and_then(|info| match info {
-                cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(
-                    route,
-                )) => {
-                    println!("Found specific route: {:?}", route);
-                    Some(route)
-                }
-                cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::RandomPrimary) => {
-                    println!("Using random primary route");
-                    Some(Route::new_random_primary())
-                }
-                other => {
-                    println!("Other routing type: {:?}", other);
-                    None
-                }
-            })
-        }));
-        println!("Final routing result: {:?}", result);
-        result
+        Ok(None)
     }
 }
 fn boxed_sleep(duration: Duration) -> BoxFuture<'static, ()> {
@@ -2222,13 +2197,8 @@ where
 
         for (index, cmd) in pipeline.cmd_iter().enumerate() {
             match cluster_routing::RoutingInfo::for_routable(cmd) {
-                Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random)) => {
-                    // let mut connections_container: std::sync::RwLockWriteGuard<
-                    //     '_,
-                    //     connections_container::ConnectionsContainer<
-                    //         future::Shared<Pin<Box<dyn Future<Output = C> + Send>>>,
-                    //     >,
-                    // > = core.conn_lock.write().expect(MUTEX_WRITE_ERR);
+                Some(cluster_routing::RoutingInfo::SingleNode(SingleNodeRoutingInfo::Random))
+                | None => {
                     if pipelines_by_connection.is_empty() {
                         let conn = crate::cluster_async::ClusterConnInner::get_connection(
                             SingleNodeRoutingInfo::Random.into(),
@@ -2318,23 +2288,14 @@ where
                     multi_node_routing,
                     response_policy,
                 ))) => {
-                    // Handle multi-node routing
-                    // This case is for commands that need to be sent to multiple nodes.
-                    // We need to split the pipeline into multiple pipelines, one for each node.
-                    // Each pipeline will contain the commands that need to be sent to that node.
-                    // We will then send each pipeline to the corresponding node.
-
                     response_policies.push((index, multi_node_routing.clone(), response_policy));
-
                     match multi_node_routing {
                         MultipleNodeRoutingInfo::AllNodes => {
-                            let all_conns: Vec<_> = {
-                                // TODO: remove extra copy
+                            let all_nodes: Vec<_> = {
                                 let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
                                 lock.all_node_connections().collect()
                             };
-                            // Route to all nodes
-                            for (address, conn) in all_conns {
+                            for (address, conn) in all_nodes {
                                 Self::add_command_to_pipeline_map(
                                     &mut pipelines_by_connection,
                                     address,
@@ -2345,13 +2306,11 @@ where
                             }
                         }
                         MultipleNodeRoutingInfo::AllMasters => {
-                            // Route to all master nodes
-                            let primaries: Vec<_> = {
-                                // TODO: remove extra copy
+                            let all_primaries: Vec<_> = {
                                 let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
                                 lock.all_primary_connections().collect()
                             };
-                            for (address, conn) in primaries {
+                            for (address, conn) in all_primaries {
                                 Self::add_command_to_pipeline_map(
                                     &mut pipelines_by_connection,
                                     address,
@@ -2362,8 +2321,6 @@ where
                             }
                         }
                         MultipleNodeRoutingInfo::MultiSlot((slots, _)) => {
-                            // Route to multiple slots
-
                             for (route, indices) in slots {
                                 let conn = {
                                     let lock = core.conn_lock.read().expect(MUTEX_READ_ERR);
@@ -2390,9 +2347,6 @@ where
                 Some(cluster_routing::RoutingInfo::SingleNode(
                     SingleNodeRoutingInfo::ByAddress { host, port },
                 )) => {
-                    // Handle routing by specific address
-                    // This case is for commands that need to be sent to a specific address.
-                    // We need to find the connection for the specified address and add the command to the pipeline for that connection.
                     let address = format!("{host}:{port}");
                     let conn = crate::cluster_async::ClusterConnInner::get_connection(
                         InternalSingleNodeRouting::ByAddress(address.clone()).into(),
@@ -2414,7 +2368,6 @@ where
                         index,
                     );
                 }
-                None => {}
             }
         }
         Ok((pipelines_by_connection, response_policies))
@@ -2451,17 +2404,14 @@ where
                             .await
                             .map_err(|err| (OperationTarget::FanOut, err))?;
                     // Wrap `values_and_adresses` and `errors` in Arc<Mutex<...>> for thread-safe access
-                    let values_and_adresses =
+                    let values_and_addresses =
                         Arc::new(Mutex::new(vec![Vec::new(); pipeline.len()]));
-                    use std::sync::{Arc, Mutex};
 
                     let first_error = Arc::new(Mutex::new(None));
                     let mut final_responses: Vec<Value> = Vec::with_capacity(pipeline.len());
                     let mut join_set = tokio::task::JoinSet::new(); // Manage spawned tasks
 
                     for (address, (pipeline, conn, indices)) in pipelines_by_connection {
-                        println!("Processing pipeline for address: {}", address.clone());
-
                         let address_for_future = address.clone();
                         let future = Self::try_pipeline_request(
                             Arc::new(pipeline.clone()),
@@ -2471,25 +2421,18 @@ where
                         );
 
                         // Clone `values_and_adresses` and `errors` for the async task
-                        let values_and_adresses_clone = values_and_adresses.clone();
-                        // let errors_clone = errors.clone();
+                        let values_and_addresses_clone = values_and_addresses.clone();
                         let address_for_spawn = address.clone();
                         let first_error = Arc::clone(&first_error);
 
                         // Spawn the async task
                         join_set.spawn(async move {
-                            let result: Result<Response, (OperationTarget, RedisError)> =
-                                future.await;
+                            let result = future.await;
                             match result {
                                 Ok(Response::Multiple(values)) => {
-                                    println!("In match - Multiple");
                                     for (index, value) in indices.iter().zip(values) {
-                                        let mut lock = values_and_adresses_clone.lock().unwrap();
-                                        if let Some(response_vec) = lock.get_mut(*index) {
-                                            response_vec.push((value, address_for_spawn.clone()));
-                                        } else {
-                                            println!("Index out of bounds: {index}");
-                                        }
+                                        let mut lock = values_and_addresses_clone.lock().unwrap();
+                                        lock[*index].push((value, address_for_spawn.clone()));
                                     }
                                 }
                                 Ok(_) => {
@@ -2505,8 +2448,6 @@ where
                                     }
                                 }
                                 Err(err) => {
-                                    println!("In match - Different response type");
-                                    // TODO: handle other response types
                                     let mut error_lock = first_error.lock().unwrap();
                                     if error_lock.is_none() {
                                         *error_lock = Some(err);
@@ -2514,64 +2455,57 @@ where
                                 }
                             }
                         });
-
-                        println!("final_responses is {:?}", final_responses.clone());
                     }
 
                     // Wait for all spawned tasks to complete
-                    while let Some(_) = join_set.join_next().await {}
+                    while let Some(_) = join_set.join_next().await {
+                        //TODO: Ask Ariel
+                    }
 
                     // Check for errors
                     if let Some(first_error) = first_error.lock().unwrap().take() {
                         return Err(first_error);
                     }
 
-                    // Process response_policies after all tasks are complete
-                    for (index, routing, response_policy) in response_policies {
-                        // Safely access `values_and_adresses` for the current index
-                        let values_with_adresses = {
-                            let lock = values_and_adresses.lock().unwrap();
+                    // Process response policies after all tasks are complete
+                    for (index, routing_info, response_policy) in response_policies {
+                        // Safely access `values_and_addresses` for the current index
+                        let current_values_with_addresses = {
+                            let lock = values_and_addresses.lock().unwrap();
                             lock[index].clone()
                         };
-
-                        println!("values with adresses: {values_with_adresses:?}");
-
-                        let receivers: Vec<(
+                        let response_receivers: Vec<(
                             Option<String>,
                             oneshot::Receiver<Result<Response, types::RedisError>>,
-                        )> = values_with_adresses
+                        )> = current_values_with_addresses
                             .iter()
-                            .map(|(value, addr)| {
+                            .map(|(value, address)| {
                                 let (sender, receiver) = oneshot::channel();
                                 let _ = sender.send(Ok(Response::Single(value.clone())));
-                                (Some(addr.clone()), receiver)
+                                (Some(address.clone()), receiver)
                             })
                             .collect();
 
-                        println!("response policy {response_policy:?}");
+                        let aggregated_response = Self::aggregate_results(
+                            response_receivers,
+                            &routing_info,
+                            response_policy,
+                        )
+                        .await
+                        .map_err(|err| (OperationTarget::FanOut, err))?;
 
-                        let r = Self::aggregate_results(receivers, &routing, response_policy)
-                            .await
-                            .map_err(|err| (OperationTarget::FanOut, err))?;
-
-                        println!("r is: {r:?}");
-
-                        // Update `values_and_adresses` for the current index
+                        // Update `values_and_addresses` for the current index
                         {
-                            let mut lock = values_and_adresses.lock().unwrap();
-                            lock[index] = vec![(r, "".to_string())];
+                            let mut lock = values_and_addresses.lock().unwrap();
+                            lock[index] = vec![(aggregated_response, "".to_string())];
                         }
                     }
 
                     // Collect final responses
-                    for ans in values_and_adresses.lock().unwrap().iter() {
+                    for ans in values_and_addresses.lock().unwrap().iter() {
                         assert_eq!(ans.len(), 1);
-                        if let Some((res, _)) = ans.clone().pop() {
-                            final_responses.push(res);
-                        }
+                        ans.clone().pop().map(|(res, _)| final_responses.push(res));
                     }
-
-                    println!("Final response is: {final_responses:?}");
 
                     Ok(Response::Multiple(final_responses))
                 }
