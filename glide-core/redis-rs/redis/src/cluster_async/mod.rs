@@ -2403,81 +2403,69 @@ where
                         Self::routes_pipeline_commands(&pipeline, core.clone())
                             .await
                             .map_err(|err| (OperationTarget::FanOut, err))?;
-                    // Wrap `values_and_adresses` and `errors` in Arc<Mutex<...>> for thread-safe access
-                    let values_and_addresses =
-                        Arc::new(Mutex::new(vec![Vec::new(); pipeline.len()]));
+                    let mut values_and_addresses = vec![Vec::new(); pipeline.len()];
 
-                    let first_error = Arc::new(Mutex::new(None));
+                    let mut first_error = None;
                     let mut final_responses: Vec<Value> = Vec::with_capacity(pipeline.len());
                     let mut join_set = tokio::task::JoinSet::new(); // Manage spawned tasks
 
                     for (address, (pipeline, conn, indices)) in pipelines_by_connection {
-                        let address_for_future = address.clone();
-                        let future = Self::try_pipeline_request(
-                            Arc::new(pipeline.clone()),
-                            0,
-                            pipeline.clone().len(),
-                            async move { Ok((address_for_future.clone(), conn)) },
-                        );
-
-                        // Clone `values_and_adresses` and `errors` for the async task
-                        let values_and_addresses_clone = values_and_addresses.clone();
-                        let address_for_spawn = address.clone();
-                        let first_error = Arc::clone(&first_error);
-
                         // Spawn the async task
                         join_set.spawn(async move {
-                            let result = future.await;
+                            let count = pipeline.len();
+                            let result =
+                                Self::try_pipeline_request(Arc::new(pipeline), 0, count, async {
+                                    Ok((address.clone(), conn))
+                                })
+                                .await?;
                             match result {
-                                Ok(Response::Multiple(values)) => {
-                                    for (index, value) in indices.iter().zip(values) {
-                                        let mut lock = values_and_addresses_clone.lock().unwrap();
-                                        lock[*index].push((value, address_for_spawn.clone()));
-                                    }
-                                }
-                                Ok(_) => {
-                                    let mut error_lock = first_error.lock().unwrap();
-                                    if error_lock.is_none() {
-                                        *error_lock = Some((
-                                            OperationTarget::FanOut,
-                                            RedisError::from((
-                                                ErrorKind::ResponseError,
-                                                "Unsupported response type",
-                                            )),
-                                        ));
-                                    }
-                                }
-                                Err(err) => {
-                                    let mut error_lock = first_error.lock().unwrap();
-                                    if error_lock.is_none() {
-                                        *error_lock = Some(err);
-                                    }
-                                }
+                                Response::Multiple(values) => Ok((indices, values, address)),
+                                _ => Err((
+                                    OperationTarget::FanOut,
+                                    RedisError::from((
+                                        ErrorKind::ResponseError,
+                                        "Unsupported response type",
+                                    )),
+                                )),
                             }
                         });
                     }
 
                     // Wait for all spawned tasks to complete
-                    while let Some(_) = join_set.join_next().await {
-                        //TODO: Ask Ariel
+                    while let Some(future_result) = join_set.join_next().await {
+                        match future_result {
+                            Err(e) => {
+                                return Err((
+                                    OperationTarget::FanOut,
+                                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                                        .into(),
+                                ));
+                            }
+                            Ok(Ok((indices, values, address))) => {
+                                for (index, value) in indices.into_iter().zip(values) {
+                                    values_and_addresses[index].push((value, address.clone()));
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                if first_error.is_none() {
+                                    first_error = Some(e);
+                                }
+                            }
+                        }
                     }
 
                     // Check for errors
-                    if let Some(first_error) = first_error.lock().unwrap().take() {
+                    if let Some(first_error) = first_error {
                         return Err(first_error);
                     }
 
                     // Process response policies after all tasks are complete
                     for (index, routing_info, response_policy) in response_policies {
                         // Safely access `values_and_addresses` for the current index
-                        let current_values_with_addresses = {
-                            let lock = values_and_addresses.lock().unwrap();
-                            lock[index].clone()
-                        };
                         let response_receivers: Vec<(
                             Option<String>,
                             oneshot::Receiver<Result<Response, types::RedisError>>,
-                        )> = current_values_with_addresses
+                        )> = values_and_addresses[index]
                             .iter()
                             .map(|(value, address)| {
                                 let (sender, receiver) = oneshot::channel();
@@ -2495,16 +2483,13 @@ where
                         .map_err(|err| (OperationTarget::FanOut, err))?;
 
                         // Update `values_and_addresses` for the current index
-                        {
-                            let mut lock = values_and_addresses.lock().unwrap();
-                            lock[index] = vec![(aggregated_response, "".to_string())];
-                        }
+                        values_and_addresses[index] = vec![(aggregated_response, "".to_string())];
                     }
 
                     // Collect final responses
-                    for ans in values_and_addresses.lock().unwrap().iter() {
+                    for mut ans in values_and_addresses.into_iter() {
                         assert_eq!(ans.len(), 1);
-                        ans.clone().pop().map(|(res, _)| final_responses.push(res));
+                        final_responses.push(ans.pop().unwrap().0);
                     }
 
                     Ok(Response::Multiple(final_responses))

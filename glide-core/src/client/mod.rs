@@ -372,18 +372,14 @@ impl Client {
         pipeline: &redis::Pipeline,
         values: Vec<Value>,
         command_count: usize,
-        offset: usize,
     ) -> RedisResult<Value> {
         let mut result_values = Vec::with_capacity(values.len());
 
         for value in values {
             match value {
-                /*Value::Array(values) => {
-                    result_values.extend(values);
-                }*/
-                Value::Nil => {
+                /*Value::Nil => {
                     return Ok(Value::Nil);
-                }
+                }*/
                 value => {
                     result_values.push(value);
                 }
@@ -443,23 +439,20 @@ impl Client {
         pipeline: &'a redis::Pipeline,
     ) -> redis::RedisFuture<'a, Value> {
         let command_count = pipeline.cmd_iter().count();
-        let offset = command_count + 1;
-        println!("request timeout is {:?}", self.request_timeout);
+        let offset = command_count + 1; //TODO: check
 
         run_with_timeout(Some(self.request_timeout), async move {
-            // is this true?
             let values = match self.internal_client {
                 ClientWrapper::Standalone(ref mut client) => {
                     client.send_pipeline(pipeline, 0, command_count).await
                 }
 
                 ClientWrapper::Cluster { ref mut client } => {
-                    println!("cluster mode");
                     client.req_packed_commands(pipeline, 0, command_count).await
                 }
             }?;
 
-            Self::get_pipeline_values(pipeline, values, command_count, offset)
+            Self::get_pipeline_values(pipeline, values, command_count)
         })
         .boxed()
     }
