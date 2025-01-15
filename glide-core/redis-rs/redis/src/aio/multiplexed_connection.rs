@@ -362,38 +362,54 @@ where
         pipeline_response_count: Option<usize>,
         timeout: Duration,
     ) -> Result<Value, RedisError> {
-        let (sender, receiver) = oneshot::channel();
+        /*println!(
+            "Starting send_recv with pipeline_response_count: {:?}, timeout: {:?}",
+            pipeline_response_count, timeout
+        );*/
 
-        self.sender
+        let (sender, receiver) = oneshot::channel();
+        //println!("Created channel for pipeline message");
+
+        let send_result = self
+            .sender
             .send(PipelineMessage {
                 input,
                 pipeline_response_count,
                 output: sender,
             })
-            .await
-            .map_err(|err| {
-                // If an error occurs here, it means the request never reached the server, as guaranteed
-                // by the 'send' function. Since the server did not receive the data, it is safe to retry
-                // the request.
-                RedisError::from((
-                    crate::ErrorKind::FatalSendError,
-                    "Failed to send the request to the server",
-                    err.to_string(),
-                ))
-            })?;
-        match Runtime::locate().timeout(timeout, receiver).await {
-            Ok(Ok(result)) => result,
+            .await;
+        //println!("Pipeline message send result: {:?}", send_result);
+
+        send_result.map_err(|err| {
+            RedisError::from((
+                crate::ErrorKind::FatalSendError,
+                "Failed to send the request to the server",
+                err.to_string(),
+            ))
+        })?;
+
+        //println!("Successfully mapped send result, proceeding to await response");
+
+        let timeout_result = Runtime::locate().timeout(timeout, receiver).await;
+        //println!("Timeout result: {:?}", timeout_result);
+
+        match timeout_result {
+            Ok(Ok(result)) => {
+                //println!("Successfully received result: {:?}", result);
+                result
+            }
             Ok(Err(err)) => {
-                // The `sender` was dropped, likely indicating a failure in the stream.
-                // This error suggests that it's unclear whether the server received the request before the connection failed,
-                // making it unsafe to retry. For example, retrying an INCR request could result in double increments.
+                // println!("Channel receive error: {}", err);
                 Err(RedisError::from((
                     crate::ErrorKind::FatalReceiveError,
                     "Failed to receive a response due to a fatal error",
                     err.to_string(),
                 )))
             }
-            Err(elapsed) => Err(elapsed.into()),
+            Err(elapsed) => {
+                // println!("Timeout elapsed");
+                Err(elapsed.into())
+            }
         }
     }
 
@@ -545,6 +561,12 @@ impl MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        /*println!(
+            "Sending packed commands with offset: {}, count: {}",
+            offset, count
+        );*/
+
+        //println!("pipeline is {:?}", cmd.get_packed_pipeline());
         let result = self
             .pipeline
             .send_recv(
@@ -554,10 +576,12 @@ impl MultiplexedConnection {
             )
             .await;
 
+        //println!("Pipeline send_recv result: {:?}", result);
+
         if self.protocol != ProtocolVersion::RESP2 {
             if let Err(e) = &result {
                 if e.is_connection_dropped() {
-                    // Notify the PushManager that the connection was lost
+                    //println!("Connection dropped, sending disconnection notification");
                     self.push_manager.try_send_raw(&Value::Push {
                         kind: PushKind::Disconnection,
                         data: vec![],
@@ -565,13 +589,20 @@ impl MultiplexedConnection {
                 }
             }
         }
+
         let value = result?;
+        //println!("Received value: {:?}", value);
+
         match value {
             Value::Array(mut values) => {
+                //println!("Processing array of {} values", values.len());
                 values.drain(..offset);
                 Ok(values)
             }
-            _ => Ok(vec![value]),
+            _ => {
+                //println!("Received non-array value");
+                Ok(vec![value])
+            }
         }
     }
 
@@ -699,6 +730,8 @@ impl ConnectionLike for MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("hereee4");
+
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 

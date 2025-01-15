@@ -38,6 +38,11 @@ pub struct Pipeline {
 impl Pipeline {
     /// Creates an empty pipeline.  For consistency with the `cmd`
     /// api a `pipe` function is provided as alias.
+    ///
+    pub fn len(&self) -> usize {
+        self.commands.len()
+    }
+
     pub fn new() -> Pipeline {
         Self::with_capacity(0)
     }
@@ -203,6 +208,10 @@ impl Pipeline {
     pub fn execute(&self, con: &mut dyn ConnectionLike) {
         self.query::<()>(con).unwrap();
     }
+
+    pub fn is_atomic(&self) -> bool {
+        self.transaction_mode
+    }
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
@@ -212,8 +221,12 @@ fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {
 }
 
 fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Cmd], atomic: bool) {
+    // shoham
     let cmds_len = cmds.iter().map(cmd_len).sum();
-
+    println!(
+        "Encoded pipeline commands: {}",
+        String::from_utf8_lossy(&rv)
+    );
     if atomic {
         let multi = cmd("MULTI");
         let exec = cmd("EXEC");
