@@ -182,6 +182,8 @@ mod socket_listener {
         expected_response_type: ResponseType,
     ) -> Response {
         let response = get_response(buffer, socket);
+
+        println!("Received response: {:?}", response);
         assert_eq!(response.callback_idx, expected_callback);
         match response.value {
             Some(response::Value::RespPointer(pointer)) => {
@@ -1354,6 +1356,20 @@ mod socket_listener {
             CALLBACK_INDEX,
             ResponseType::RequestError,
         );
+
+        /*assert_value_response(
+            &mut buffer,
+            Some(&mut socket),
+            CALLBACK_INDEX,
+            Value::Array(vec![
+                Value::Okay,
+                Value::BulkString(vec![b'b', b'a', b'r']),
+                Value::Array(vec![Value::BulkString(vec![b'b', b'a', b'r']), Value::Nil]),
+                Value::Okay,
+                Value::Nil,
+                Value::BulkString(vec![b'H', b'E', b'L', b'L', b'O']),
+            ]),
+        );*/
     }
     #[rstest]
     #[serial_test::serial]

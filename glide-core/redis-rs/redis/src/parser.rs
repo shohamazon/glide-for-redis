@@ -73,6 +73,7 @@ where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
+    println!("probably reading something");
     let count = count.unwrap_or(1);
 
     opaque!(any_send_sync_partial_state(
@@ -321,6 +322,7 @@ mod aio_support {
             bytes: &mut BytesMut,
             eof: bool,
         ) -> RedisResult<Option<RedisResult<Value>>> {
+            println!("decoding stream");
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =
@@ -378,6 +380,7 @@ mod aio_support {
     where
         R: AsyncRead + std::marker::Unpin,
     {
+        println!("parsing redis value async");
         let result = combine::decode_tokio!(*decoder, *read, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)
         });
@@ -435,6 +438,7 @@ impl Parser {
 
     /// Parses synchronously into a single value from the reader.
     pub fn parse_value<T: Read>(&mut self, mut reader: T) -> RedisResult<Value> {
+        println!("parsing value");
         let mut decoder = &mut self.decoder;
         let result = combine::decode!(decoder, reader, value(None), |input, _| {
             combine::stream::easy::Stream::from(input)

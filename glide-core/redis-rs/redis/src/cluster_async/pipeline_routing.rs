@@ -1,6 +1,8 @@
 use crate::aio::ConnectionLike;
 use crate::cluster_async::ClusterConnInner;
 use crate::cluster_async::Connect;
+use crate::cluster_routing::Redirect;
+use crate::cluster_routing::RoutingInfo;
 use crate::cluster_routing::{
     command_for_multi_slot_indices, MultipleNodeRoutingInfo, ResponsePolicy, SingleNodeRoutingInfo,
 };
@@ -18,6 +20,7 @@ use tokio::sync::oneshot::error::RecvError;
 
 use super::CmdArg;
 use super::PendingRequest;
+use super::RedirectNode;
 use super::RequestInfo;
 use super::{Core, InternalSingleNodeRouting, OperationTarget, Response};
 
@@ -142,7 +145,7 @@ where
                     index,
                 )
                 .await
-                .map_err(|(_target, err)| err)?;
+                .map_err(|(_target, err)| err)?; // todo - handle error
             }
 
             cluster_routing::RoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
@@ -370,11 +373,19 @@ pub fn add_pipeline_result(
 ///
 /// - `Ok(())` if all responses are processed successfully.
 /// - `Err((OperationTarget, RedisError))` if a node-level or reception error occurs.
-pub fn process_pipeline_responses(
+pub async fn process_pipeline_responses<C>(
     pipeline_responses: &mut PipelineResponses,
     responses: Vec<Result<RedisResult<Response>, RecvError>>,
     addresses_and_indices: AddressAndIndices,
-) -> Result<(), (OperationTarget, RedisError)> {
+    pipeline: &crate::Pipeline,
+    core: Core<C>,
+) -> Result<(), (OperationTarget, RedisError)>
+where
+    C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
+{
+    let mut moved_error_indices = Vec::new();
+    let mut errors = Vec::new();
+
     for ((address, command_indices), response_result) in
         addresses_and_indices.into_iter().zip(responses)
     {
@@ -382,16 +393,35 @@ pub fn process_pipeline_responses(
             Ok(Ok(Response::Multiple(values))) => {
                 // Add each response to the pipeline_responses vector at the appropriate index
                 for ((index, inner_index), value) in command_indices.into_iter().zip(values) {
-                    add_pipeline_result(
-                        pipeline_responses,
-                        index,
-                        inner_index,
-                        value,
-                        address.clone(),
-                    );
+                    match value.clone() {
+                        Value::ServerError(e)
+                            if matches!(e.kind(), ErrorKind::Moved | ErrorKind::Ask) =>
+                        {
+                            // update upon moved
+                            let r: RedisError = e.into();
+                            let x = RedirectNode::from_option_tuple(r.redirect_node()).unwrap();
+                            let future = ClusterConnInner::update_upon_moved_error(
+                                core.clone(),
+                                x.slot,
+                                x.address.into(),
+                            );
+                            moved_error_indices.push((index, inner_index));
+                            //errors.push(e.into());
+                        }
+                        _ => {
+                            add_pipeline_result(
+                                pipeline_responses,
+                                index,
+                                inner_index,
+                                value,
+                                address.clone(),
+                            );
+                        }
+                    }
                 }
             }
             Ok(Err(err)) => {
+                // apply to all commands in the pipeline
                 return Err((OperationTarget::Node { address }, err));
             }
             _ => {
@@ -402,6 +432,96 @@ pub fn process_pipeline_responses(
             }
         }
     }
+
+    handle_moved_commands(
+        pipeline_responses,
+        pipeline,
+        moved_error_indices,
+        errors,
+        core,
+    )
+    .await
+}
+
+/// Handles commands that encountered a MOVED error during pipeline execution.
+///
+/// This function processes commands that resulted in a MOVED error, indicating that the key
+/// has been moved to a different node. It creates a new pipeline from the commands that encountered
+/// the MOVED error and retries their execution.
+///
+/// # Arguments
+///
+/// * `pipeline_responses` - A mutable reference to the collection of pipeline responses.
+/// * `pipeline` - A reference to the original pipeline containing the commands.
+/// * `moved_error_indices` - A vector of indices indicating which commands encountered a MOVED error.
+/// * `core` - The core object that provides access to connection locks and other resources.
+///
+/// # Returns
+///
+/// A `Result` indicating the success or failure of handling the MOVED commands.
+pub async fn handle_moved_commands<C>(
+    pipeline_responses: &mut PipelineResponses,
+    pipeline: &crate::Pipeline,
+    moved_error_indices: Vec<(usize, Option<usize>)>,
+    errors: Vec<RedisError>,
+    core: Core<C>,
+) -> Result<(), (OperationTarget, RedisError)>
+where
+    C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
+{
+    // Create a pipeline from moved_error_indices
+    if !moved_error_indices.is_empty() {
+        let mut pipeline_map = NodePipelineMap::new();
+        for ((index, inner_index), error) in moved_error_indices.clone().into_iter().zip(errors) {
+            if let Some(cmd) = pipeline.get_command(index) {
+                let redirect = InternalSingleNodeRouting::Redirect {
+                    redirect: error.redirect(),
+                    previous_routing: Box::new(InternalSingleNodeRouting::Random::<C>),
+                };
+                let (address, conn) = ClusterConnInner::get_connection(
+                    redirect,
+                    core.clone(),
+                    Some(Arc::new(cmd.clone())),
+                )
+                .await
+                .map_err(|err| (OperationTarget::NotFound, err))?;
+                add_command_to_node_pipeline_map(
+                    &mut pipeline_map,
+                    address,
+                    conn,
+                    cmd.clone(),
+                    index,
+                    inner_index,
+                );
+            }
+        }
+
+        let (receivers, pending_requests, addresses_and_indices) =
+            collect_pipeline_requests(pipeline_map);
+
+        // Add the pending requests to the pending_requests queue
+        core.pending_requests
+            .lock()
+            .unwrap()
+            .extend(pending_requests.into_iter());
+
+        // Wait for all receivers to complete and collect the responses
+        let responses: Vec<_> = futures::future::join_all(receivers.into_iter())
+            .await
+            .into_iter()
+            .collect();
+
+        // Process the responses and update the pipeline_responses
+        process_pipeline_responses(
+            pipeline_responses,
+            responses,
+            addresses_and_indices,
+            pipeline, //todo: check
+            core,
+        )
+        .await?;
+    }
+
     Ok(())
 }
 

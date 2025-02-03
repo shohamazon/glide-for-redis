@@ -1382,6 +1382,7 @@ impl ConnectionLike for Connection {
                     kind: _kind,
                     data: _data,
                 } => continue,
+                Value::ServerError(e) => return Err(e.into()),
                 val => return Ok(val),
             }
         }
@@ -1393,6 +1394,7 @@ impl ConnectionLike for Connection {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        println!("req_packed_commands");
         if self.pubsub {
             self.exit_pubsub()?;
         }
@@ -1408,6 +1410,16 @@ impl ConnectionLike for Connection {
             // See: https://github.com/redis-rs/redis-rs/issues/436
             let response = self.read_response();
             match response {
+                Ok(Value::ServerError(err)) => {
+                    println!("error: {:?}", err);
+                    //if idx < offset {
+                    if first_err.is_none() {
+                        println!("here");
+                        first_err = Some(err.clone().into()); // TODO: raise only bc of flag
+                    }
+                    //}
+                    // rv.push(Value::ServerError(err));
+                }
                 Ok(item) => {
                     // RESP3 can insert push data between command replies
                     if let Value::Push {
@@ -1422,6 +1434,7 @@ impl ConnectionLike for Connection {
                     }
                 }
                 Err(err) => {
+                    // shoham
                     if first_err.is_none() {
                         first_err = Some(err);
                     }
@@ -1461,6 +1474,7 @@ where
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        println!("Thisis 2");
         self.deref_mut().req_packed_commands(cmd, offset, count)
     }
 

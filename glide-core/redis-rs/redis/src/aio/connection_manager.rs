@@ -298,6 +298,7 @@ impl ConnectionLike for ConnectionManager {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("this is 3");
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 

@@ -199,6 +199,8 @@ where
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("req_packed_commands2");
+
         (async move {
             if self.pubsub {
                 self.exit_pubsub().await?;
@@ -216,6 +218,11 @@ where
                     if first_err.is_none() {
                         first_err = Some(err);
                     }
+                } else if let Ok(Value::ServerError(e)) = response {
+                    print!("yes");
+                    if first_err.is_none() {
+                        first_err = Some(e.into());
+                    }
                 }
             }
 
@@ -225,6 +232,16 @@ where
             while idx < count {
                 let response = self.read_response().await;
                 match response {
+                    Ok(Value::ServerError(err)) => {
+                        println!("error: {:?}", err);
+                        //if idx < offset {
+                        if first_err.is_none() {
+                            println!("here");
+                            first_err = Some(err.clone().into()); // TODO: raise only bc of flag
+                        }
+                        //}
+                        // rv.push(Value::ServerError(err));
+                    }
                     Ok(item) => {
                         // RESP3 can insert push data between command replies
                         if let Value::Push { .. } = item {

@@ -131,6 +131,7 @@ where
 
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
+        println!("In poll_read");
         loop {
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
@@ -151,6 +152,7 @@ where
     }
 
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
+        println!("In send_result, result: {:?}", result);
         let self_ = self.project();
         let mut skip_value = false;
         if let Ok(res) = &result {
@@ -184,6 +186,7 @@ where
                 first_err,
             } => {
                 match result {
+                    // shalom
                     Ok(item) => {
                         buffer.push(item);
                     }
@@ -243,6 +246,7 @@ where
             pipeline_response_count,
         }: PipelineMessage<SinkItem>,
     ) -> Result<(), Self::Error> {
+        println!("In start_send");
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
         // connection.
@@ -352,6 +356,7 @@ where
         item: SinkItem,
         timeout: Duration,
     ) -> Result<Value, RedisError> {
+        println!("In send_single");
         self.send_recv(item, None, timeout).await
     }
 
@@ -374,7 +379,7 @@ where
             .map_err(|err| {
                 // If an error occurs here, it means the request never reached the server, as guaranteed
                 // by the 'send' function. Since the server did not receive the data, it is safe to retry
-                // the request.
+                // the request - even as a pipeline.
                 RedisError::from((
                     crate::ErrorKind::FatalSendError,
                     "Failed to send the request to the server",
@@ -565,7 +570,7 @@ impl MultiplexedConnection {
                 }
             }
         }
-        let value = result?;
+        let value = result?.extract_error()?;
         match value {
             Value::Array(mut values) => {
                 values.drain(..offset);
@@ -699,6 +704,7 @@ impl ConnectionLike for MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("this is 4");
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 

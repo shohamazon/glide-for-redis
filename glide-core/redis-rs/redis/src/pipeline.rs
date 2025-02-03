@@ -1,5 +1,7 @@
 #![macro_use]
 
+use rand::seq::index;
+
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
@@ -220,6 +222,10 @@ impl Pipeline {
     /// Returns `true` if the pipeline contains no commands.
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
+    }
+
+    pub fn get_command(&self, index: usize) -> Option<&Cmd> {
+        self.commands.get(index)
     }
 }
 

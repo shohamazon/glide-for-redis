@@ -44,8 +44,8 @@ use crate::{
 };
 use dashmap::DashMap;
 use pipeline_routing::{
-    collect_pipeline_requests, map_pipeline_to_nodes, process_pipeline_responses,
-    route_for_pipeline, PipelineResponses,
+    collect_pipeline_requests, handle_moved_commands, map_pipeline_to_nodes,
+    process_pipeline_responses, route_for_pipeline, PipelineResponses,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -895,6 +895,7 @@ impl<C> Future for Request<C> {
                         || matches!(target, OperationTarget::NotFound)
                     {
                         Next::RefreshSlots {
+                            //update_upo
                             request: None,
                             sleep_duration: None,
                             moved_redirect: RedirectNode::from_option_tuple(err.redirect_node()),
@@ -2091,6 +2092,7 @@ where
             .map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_command(&cmd)
             .await
+            .and_then(|value| value.extract_error())
             .map(Response::Single)
             .map_err(|err| (address.into(), err))
     }
@@ -2120,6 +2122,7 @@ where
                 sub_pipeline,
             } => {
                 if pipeline.is_atomic() || sub_pipeline {
+                    println!("pipeline is atomic or sub_pipeline");
                     // If the pipeline is atomic (i.e., a transaction) or if the pipeline is already splitted into sub-pipelines, we can send it as is, with no need to split it into sub-pipelines.
                     Self::try_pipeline_request(
                         pipeline,
@@ -2180,7 +2183,10 @@ where
                         &mut pipeline_responses,
                         responses,
                         addresses_and_indices,
-                    )?;
+                        &pipeline,
+                        core,
+                    )
+                    .await?;
 
                     // Process response policies after all tasks are complete
                     Self::aggregate_pipeline_multi_node_commands(
@@ -2191,8 +2197,13 @@ where
 
                     // Collect final responses
                     for mut value in pipeline_responses.into_iter() {
+                        println!("value: {:?}", value);
+                        let value = value.pop().unwrap().0;
+                        if let Value::ServerError(err) = value {
+                            return Err((OperationTarget::FanOut, err.clone().into()));
+                        }
                         // unwrap() is safe here because we know that the vector is not empty
-                        final_responses.push(value.pop().unwrap().0);
+                        final_responses.push(value);
                     }
 
                     Ok(Response::Multiple(final_responses))
@@ -2698,6 +2709,7 @@ where
     }
 
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
+        println!("Start send 2");
         let Message { cmd, sender } = msg;
 
         let info = RequestInfo { cmd };

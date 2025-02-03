@@ -11,6 +11,10 @@ use std::string::FromUtf8Error;
 use num_bigint::BigInt;
 pub(crate) use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
+use strum_macros::Display;
+
+use crate::cluster_async::RedirectNode;
+use crate::cluster_routing::Redirect;
 
 macro_rules! invalid_type_error {
     ($v:expr, $det:expr) => {{
@@ -159,8 +163,8 @@ pub enum ErrorKind {
     UserOperationError,
 }
 
-#[derive(PartialEq, Debug)]
-pub(crate) enum ServerErrorKind {
+#[derive(PartialEq, Debug, Clone)]
+pub enum ServerErrorKind {
     ResponseError,
     ExecAbortError,
     BusyLoadingError,
@@ -175,8 +179,8 @@ pub(crate) enum ServerErrorKind {
     NotBusy,
 }
 
-#[derive(PartialEq, Debug)]
-pub(crate) enum ServerError {
+#[derive(PartialEq, Debug, Clone, Display)]
+pub enum ServerError {
     ExtensionError {
         code: String,
         detail: Option<String>,
@@ -185,6 +189,29 @@ pub(crate) enum ServerError {
         kind: ServerErrorKind,
         detail: Option<String>,
     },
+}
+
+impl ServerError {
+    //return error kind
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            ServerError::ExtensionError { .. } => ErrorKind::ExtensionError,
+            ServerError::KnownError { kind, .. } => match kind {
+                ServerErrorKind::ResponseError => ErrorKind::ResponseError,
+                ServerErrorKind::ExecAbortError => ErrorKind::ExecAbortError,
+                ServerErrorKind::BusyLoadingError => ErrorKind::BusyLoadingError,
+                ServerErrorKind::NoScriptError => ErrorKind::NoScriptError,
+                ServerErrorKind::Moved => ErrorKind::Moved,
+                ServerErrorKind::Ask => ErrorKind::Ask,
+                ServerErrorKind::TryAgain => ErrorKind::TryAgain,
+                ServerErrorKind::ClusterDown => ErrorKind::ClusterDown,
+                ServerErrorKind::CrossSlot => ErrorKind::CrossSlot,
+                ServerErrorKind::MasterDown => ErrorKind::MasterDown,
+                ServerErrorKind::ReadOnly => ErrorKind::ReadOnly,
+                ServerErrorKind::NotBusy => ErrorKind::NotBusy,
+            },
+        }
+    }
 }
 
 impl From<tokio::time::error::Elapsed> for RedisError {
@@ -303,7 +330,7 @@ impl InternalValue {
                 data: Self::try_into_vec(data)?,
             }),
 
-            InternalValue::ServerError(err) => Err(err.into()),
+            InternalValue::ServerError(err) => Ok(Value::ServerError(err)),
         }
     }
 
@@ -372,6 +399,8 @@ pub enum Value {
         /// Remaining data from push message
         data: Vec<Value>,
     },
+    /// Represents an error message from the server
+    ServerError(ServerError),
 }
 
 /// `VerbatimString`'s format types defined by spec
@@ -585,6 +614,40 @@ impl Value {
             _ => Err(self),
         }
     }
+
+    /// If value contains a server error, return it as an Err. Otherwise wrap the value in Ok.
+    pub fn extract_error(self) -> RedisResult<Self> {
+        match self {
+            Self::Array(val) => Ok(Self::Array(Self::extract_error_vec(val)?)),
+            Self::Map(map) => Ok(Self::Map(Self::extract_error_map(map)?)),
+            Self::Attribute { data, attributes } => {
+                let data = Box::new((*data).extract_error()?);
+                let attributes = Self::extract_error_map(attributes)?;
+                Ok(Value::Attribute { data, attributes })
+            }
+            Self::Set(set) => Ok(Self::Set(Self::extract_error_vec(set)?)),
+            Self::Push { kind, data } => Ok(Self::Push {
+                kind,
+                data: Self::extract_error_vec(data)?,
+            }),
+            Value::ServerError(err) => Err(err.into()),
+            _ => Ok(self),
+        }
+    }
+
+    fn extract_error_vec(vec: Vec<Self>) -> RedisResult<Vec<Self>> {
+        vec.into_iter()
+            .map(Self::extract_error)
+            .collect::<RedisResult<Vec<_>>>()
+    }
+
+    fn extract_error_map(map: Vec<(Self, Self)>) -> RedisResult<Vec<(Self, Self)>> {
+        let mut vec = Vec::with_capacity(map.len());
+        for (key, value) in map.into_iter() {
+            vec.push((key.extract_error()?, value.extract_error()?));
+        }
+        Ok(vec)
+    }
 }
 
 impl fmt::Debug for Value {
@@ -615,6 +678,7 @@ impl fmt::Debug for Value {
                 write!(fmt, "verbatim-string({:?},{:?})", format, text)
             }
             Value::BigNumber(ref m) => write!(fmt, "big-number({:?})", m),
+            Value::ServerError(ref err) => write!(fmt, "server-error({:?})", err),
         }
     }
 }
@@ -1006,6 +1070,24 @@ impl RedisError {
         let slot_id: u16 = iter.next()?.parse().ok()?;
         let addr = iter.next()?;
         Some((addr, slot_id))
+    }
+
+    pub fn redirect(&self) -> Redirect {
+        match self.kind() {
+            ErrorKind::Ask => {
+                let node = self
+                    .redirect_node()
+                    .expect("Expected redirect node for Ask error");
+                Redirect::Ask(node.0.to_string())
+            }
+            ErrorKind::Moved => {
+                let node = self
+                    .redirect_node()
+                    .expect("Expected redirect node for Moved error");
+                Redirect::Moved(node.0.to_string())
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// Returns the extension error code.
