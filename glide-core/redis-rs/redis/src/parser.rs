@@ -73,7 +73,6 @@ where
     I: RangeStream<Token = u8, Range = &'a [u8]>,
     I::Error: combine::ParseError<u8, &'a [u8], I::Position>,
 {
-    println!("probably reading something");
     let count = count.unwrap_or(1);
 
     opaque!(any_send_sync_partial_state(
@@ -322,7 +321,6 @@ mod aio_support {
             bytes: &mut BytesMut,
             eof: bool,
         ) -> RedisResult<Option<RedisResult<Value>>> {
-            println!("decoding stream");
             let (opt, removed_len) = {
                 let buffer = &bytes[..];
                 let mut stream =

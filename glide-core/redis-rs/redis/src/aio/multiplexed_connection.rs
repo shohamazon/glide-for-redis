@@ -131,7 +131,6 @@ where
 
     // Read messages from the stream and send them back to the caller
     fn poll_read(mut self: Pin<&mut Self>, cx: &mut task::Context) -> Poll<Result<(), ()>> {
-        println!("In poll_read");
         loop {
             let item = match ready!(self.as_mut().project().sink_stream.poll_next(cx)) {
                 Some(result) => result,
@@ -147,6 +146,7 @@ where
                     return Poll::Ready(Err(()));
                 }
             };
+            println!("In poll_read, item: {:?}", item);
             self.as_mut().send_result(item);
         }
     }
@@ -188,9 +188,11 @@ where
                 match result {
                     // shalom
                     Ok(item) => {
+                        println!("In send_result, Ok(item) {item:?}");
                         buffer.push(item);
                     }
                     Err(err) => {
+                        println!("In send_result, Err(err) {err:?}");
                         if first_err.is_none() {
                             *first_err = Some(err);
                         }
@@ -208,6 +210,8 @@ where
                     Some(err) => Err(err),
                     None => Ok(Value::Array(std::mem::take(buffer))),
                 };
+
+                println!("In send_result, response: {response:?}");
 
                 // `Err` means that the receiver was dropped in which case it does not
                 // care about the output and we can continue by just dropping the value
@@ -570,7 +574,7 @@ impl MultiplexedConnection {
                 }
             }
         }
-        let value = result?.extract_error()?;
+        let value = result?;
         match value {
             Value::Array(mut values) => {
                 values.drain(..offset);

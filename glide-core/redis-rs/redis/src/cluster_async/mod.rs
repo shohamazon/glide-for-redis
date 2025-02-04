@@ -45,7 +45,8 @@ use crate::{
 use dashmap::DashMap;
 use pipeline_routing::{
     collect_pipeline_requests, handle_moved_commands, map_pipeline_to_nodes,
-    process_pipeline_responses, route_for_pipeline, PipelineResponses,
+    process_and_retry_pipeline_responses, process_pipeline_responses, route_for_pipeline,
+    PipelineResponses,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -1907,6 +1908,7 @@ where
         slot: u16,
         new_primary: Arc<String>,
     ) -> RedisResult<()> {
+        println!("update_upon_moved_error slot: {slot} new_primary: {new_primary}");
         let curr_shard_addrs = inner
             .conn_lock
             .read()
@@ -1916,6 +1918,8 @@ where
         // let curr_shard_addrs = connections_container.slot_map.shard_addrs_for_slot(slot);
         // Check if the new primary is part of the current shard and update if required
         if let Some(curr_shard_addrs) = curr_shard_addrs {
+            println!("curr_shard_addrs: {curr_shard_addrs:?}");
+
             match curr_shard_addrs.attempt_shard_role_update(new_primary.clone()) {
                 // Scenario 1: No changes needed as the new primary is already the current slot owner.
                 // Scenario 2: Failover occurred and the new primary was promoted from a replica.
@@ -1926,6 +1930,7 @@ where
         }
 
         // Scenario 3 & 4: Check if the new primary exists in other shards
+        println!("checking if the new primary exists in other shards");
 
         let mut wlock_conn_container = inner.conn_lock.write().expect(MUTEX_READ_ERR);
         let mut nodes_iter = wlock_conn_container.slot_map_nodes();
@@ -1935,6 +1940,7 @@ where
                 if is_existing_primary {
                     // Scenario 3: Slot Migration - The new primary is an existing primary in another shard
                     // Update the associated addresses for `slot` to `shard_addrs`.
+                    println!("updating slot mapping for slot {slot} to new shard addresses");
                     drop(nodes_iter);
                     return wlock_conn_container
                         .slot_map
@@ -2179,7 +2185,7 @@ where
                         .collect();
 
                     // Process the responses and update the pipeline_responses
-                    process_pipeline_responses(
+                    process_and_retry_pipeline_responses(
                         &mut pipeline_responses,
                         responses,
                         addresses_and_indices,
@@ -2199,9 +2205,9 @@ where
                     for mut value in pipeline_responses.into_iter() {
                         println!("value: {:?}", value);
                         let value = value.pop().unwrap().0;
-                        if let Value::ServerError(err) = value {
+                        /*if let Value::ServerError(err) = value {
                             return Err((OperationTarget::FanOut, err.clone().into()));
-                        }
+                        }*/
                         // unwrap() is safe here because we know that the vector is not empty
                         final_responses.push(value);
                     }
