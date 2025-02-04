@@ -216,6 +216,10 @@ mod test_cluster_scan_async {
             .set("key1", "value1")
             .get("key2")
             .del("key3")
+            .get("key1")
+            .mget("{key1}")
+            .arg("key1")
+            .arg("{key1}2")
             .get("key4")
             .get("key5");
 

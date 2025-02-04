@@ -295,7 +295,6 @@ where
     let mut addresses_and_indices = Vec::new();
 
     for (address, context) in pipelines_by_connection {
-        println!("Address is {address} Context is: {:?}", context.pipeline);
         // Create a channel to receive the pipeline execution results
         let (sender, receiver) = oneshot::channel();
         // Add the receiver to the list of receivers
@@ -377,9 +376,8 @@ pub async fn process_pipeline_responses<C>(
     pipeline_responses: &mut PipelineResponses,
     responses: Vec<Result<RedisResult<Response>, RecvError>>,
     addresses_and_indices: AddressAndIndices,
-    pipeline: &crate::Pipeline,
     core: Core<C>,
-) -> Result<((Vec<(usize, Option<usize>)>, Vec<RedisError>)), (OperationTarget, RedisError)>
+) -> Result<(Vec<(usize, Option<usize>)>, Vec<RedisError>), (OperationTarget, RedisError)>
 where
     C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
 {
@@ -395,25 +393,30 @@ where
                 for ((index, inner_index), value) in command_indices.into_iter().zip(values) {
                     match value.clone() {
                         Value::ServerError(e)
-                            if matches!(e.kind(), ErrorKind::Moved | ErrorKind::Ask) =>
+                            if e.kind() == ErrorKind::Moved || e.kind() == ErrorKind::Ask =>
                         {
-                            println!("MOVED/ASK error, index: {}", index);
-                            if matches!(e.kind(), ErrorKind::Moved) {
-                                println!("MOVED error");
-                                // update upon moved
-                                let r: RedisError = e.clone().into();
-                                let x = RedirectNode::from_option_tuple(r.redirect_node()).unwrap();
-                                let address = x.address.clone();
-
-                                ClusterConnInner::update_upon_moved_error(
-                                    core.clone(),
-                                    x.slot,
-                                    x.address.into(),
-                                )
-                                .await
-                                .map_err(|err| (address.into(), err))?;
+                            if e.kind() == ErrorKind::Moved {
+                                let redis_error: RedisError = e.clone().into();
+                                let redirect_node =
+                                    RedirectNode::from_option_tuple(redis_error.redirect_node());
+                                if let Some(redirect_node) = redirect_node {
+                                    ClusterConnInner::update_upon_moved_error(
+                                        core.clone(),
+                                        redirect_node.slot,
+                                        redirect_node.address.clone().into(),
+                                    )
+                                    .await
+                                    .map_err(|err| (redirect_node.address.into(), err))?;
+                                } else {
+                                    return Err((
+                                        OperationTarget::Node { address },
+                                        RedisError::from((
+                                            ErrorKind::ResponseError,
+                                            "Failed to parse MOVED error",
+                                        )),
+                                    ));
+                                }
                             }
-
                             moved_error_indices.push((index, inner_index));
                             errors.push(e.into());
                         }
@@ -429,10 +432,9 @@ where
                     }
                 }
             }
-            Ok(Err(err)) => {
-                println!("Error is: {:?}", err);
-                // apply to all commands in the pipeline
-                return Err((OperationTarget::Node { address }, err));
+            Ok(Err(_err)) => {
+                //TODO: apply to all commands in the pipeline
+                for (_index, _inner_index) in command_indices {}
             }
             _ => {
                 return Err((
@@ -444,6 +446,49 @@ where
     }
 
     Ok((moved_error_indices, errors))
+}
+
+/// Collects and sends pending requests for the given pipeline map, and waits for their responses.
+///
+/// This function creates `PendingRequest` objects for each pipeline in the provided pipeline map,
+/// adds them to the core's pending requests queue, and waits for all responses to be received.
+///
+/// # Arguments
+///
+/// * `pipeline_map` - A map of node pipelines where the commands are grouped by their corresponding nodes.
+/// * `core` - The core object that provides access to connection locks and other resources.
+///
+/// # Returns
+///
+/// A tuple containing:
+/// - A vector of results for each sub-pipeline execution.
+/// - A vector of (address, indices) pairs indicating where each response should be placed.
+pub async fn collect_and_send_pending_requests<C>(
+    pipeline_map: NodePipelineMap<C>,
+    core: Core<C>,
+) -> (
+    Vec<Result<RedisResult<Response>, RecvError>>,
+    Vec<(String, Vec<(usize, Option<usize>)>)>,
+)
+where
+    C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
+{
+    let (receivers, pending_requests, addresses_and_indices) =
+        collect_pipeline_requests(pipeline_map);
+
+    // Add the pending requests to the pending_requests queue
+    core.pending_requests
+        .lock()
+        .unwrap()
+        .extend(pending_requests.into_iter());
+
+    // Wait for all receivers to complete and collect the responses
+    let responses: Vec<_> = futures::future::join_all(receivers.into_iter())
+        .await
+        .into_iter()
+        .collect();
+
+    (responses, addresses_and_indices)
 }
 
 /// Handles commands that encountered a MOVED error during pipeline execution.
@@ -463,7 +508,6 @@ where
 ///
 /// A `Result` indicating the success or failure of handling the MOVED commands.
 pub async fn handle_moved_commands<C>(
-    pipeline_responses: &mut PipelineResponses,
     pipeline: &crate::Pipeline,
     moved_error_indices: Vec<(usize, Option<usize>)>,
     errors: Vec<RedisError>,
@@ -478,52 +522,30 @@ pub async fn handle_moved_commands<C>(
 where
     C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
 {
-    println!("Handling moved commands");
-    // Create a pipeline from moved_error_indices
     let mut pipeline_map = NodePipelineMap::new();
     for ((index, inner_index), error) in moved_error_indices.clone().into_iter().zip(errors) {
         if let Some(cmd) = pipeline.get_command(index) {
-            println!("# Command is: {:?}", cmd);
             let redirect = InternalSingleNodeRouting::Redirect {
                 redirect: error.redirect(),
                 previous_routing: Box::new(InternalSingleNodeRouting::Random::<C>),
             };
-            let (address, conn) = ClusterConnInner::get_connection(
-                redirect,
-                core.clone(),
-                Some(Arc::new(cmd.clone())),
-            )
-            .await
-            .map_err(|err| (OperationTarget::NotFound, err))?;
+            let (address, conn) = ClusterConnInner::get_connection(redirect, core.clone(), None)
+                .await
+                .map_err(|err| (OperationTarget::NotFound, err))?;
 
-            println!("# Address is: {}", address);
             add_command_to_node_pipeline_map(
                 &mut pipeline_map,
                 address,
                 conn,
-                cmd.clone(),
+                cmd.clone(), //TODO: change to &Cmd
                 index,
                 inner_index,
             );
+        } else {
         }
     }
 
-    let (receivers, pending_requests, addresses_and_indices) =
-        collect_pipeline_requests(pipeline_map);
-
-    // Add the pending requests to the pending_requests queue
-    core.pending_requests
-        .lock()
-        .unwrap()
-        .extend(pending_requests.into_iter());
-
-    // Wait for all receivers to complete and collect the responses
-    let responses: Vec<_> = futures::future::join_all(receivers.into_iter())
-        .await
-        .into_iter()
-        .collect();
-
-    Ok((responses, addresses_and_indices))
+    Ok(collect_and_send_pending_requests(pipeline_map, core).await)
 }
 
 /// Processes the pipeline responses and handles any MOVED errors by retrying the commands.
@@ -559,7 +581,6 @@ where
             pipeline_responses,
             responses,
             addresses_and_indices,
-            pipeline,
             core.clone(),
         )
         .await
@@ -568,14 +589,9 @@ where
                 if moved_error_indices.is_empty() {
                     break Ok(());
                 }
-                (responses, addresses_and_indices) = handle_moved_commands(
-                    pipeline_responses,
-                    pipeline,
-                    moved_error_indices,
-                    errors,
-                    core.clone(),
-                )
-                .await?;
+                (responses, addresses_and_indices) =
+                    handle_moved_commands(pipeline, moved_error_indices, errors, core.clone())
+                        .await?;
             }
 
             Err(e) => break Err(e),

@@ -44,9 +44,9 @@ use crate::{
 };
 use dashmap::DashMap;
 use pipeline_routing::{
-    collect_pipeline_requests, handle_moved_commands, map_pipeline_to_nodes,
-    process_and_retry_pipeline_responses, process_pipeline_responses, route_for_pipeline,
-    PipelineResponses,
+    collect_and_send_pending_requests, collect_pipeline_requests, handle_moved_commands,
+    map_pipeline_to_nodes, process_and_retry_pipeline_responses, process_pipeline_responses,
+    route_for_pipeline, PipelineResponses,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -2169,20 +2169,9 @@ where
                     //   for execution on a node.
                     // - `addresses_and_indices`: A vector of tuples where each tuple contains a node address and a list
                     //   of command indices for each sub-pipeline, allowing the results to be mapped back to their original command within the original pipeline.
-                    let (receivers, pending_requests, addresses_and_indices) =
-                        collect_pipeline_requests(pipelines_by_connection);
-
-                    // Add the pending requests to the pending_requests queue
-                    core.pending_requests
-                        .lock()
-                        .unwrap()
-                        .extend(pending_requests.into_iter());
-
-                    // Wait for all receivers to complete and collect the responses
-                    let responses: Vec<_> = futures::future::join_all(receivers.into_iter())
-                        .await
-                        .into_iter()
-                        .collect();
+                    let (responses, addresses_and_indices) =
+                        collect_and_send_pending_requests(pipelines_by_connection, core.clone())
+                            .await;
 
                     // Process the responses and update the pipeline_responses
                     process_and_retry_pipeline_responses(
