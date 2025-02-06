@@ -44,7 +44,9 @@ use crate::{
 };
 use dashmap::DashMap;
 use pipeline_routing::{
-    collect_pipeline_requests, map_pipeline_to_nodes, process_pipeline_responses,
+    collect_and_send_pending_requests, collect_pipeline_requests, handle_moved_commands,
+    map_pipeline_to_nodes, process_and_retry_pipeline_responses, process_pipeline_responses,
+
     route_for_pipeline, PipelineResponses,
 };
 use std::{
@@ -292,6 +294,8 @@ where
                     count,
                     route: route.into(),
                     sub_pipeline: false,
+                    retry: 0,
+
                 },
                 sender,
             })
@@ -614,6 +618,8 @@ enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
         sub_pipeline: bool,
+        retry: u32,
+
     },
     ClusterScan {
         // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
@@ -895,6 +901,7 @@ impl<C> Future for Request<C> {
                         || matches!(target, OperationTarget::NotFound)
                     {
                         Next::RefreshSlots {
+                            //update_upo
                             request: None,
                             sleep_duration: None,
                             moved_redirect: RedirectNode::from_option_tuple(err.redirect_node()),
@@ -1906,6 +1913,7 @@ where
         slot: u16,
         new_primary: Arc<String>,
     ) -> RedisResult<()> {
+        println!("update_upon_moved_error slot: {slot} new_primary: {new_primary}");
         let curr_shard_addrs = inner
             .conn_lock
             .read()
@@ -1915,6 +1923,8 @@ where
         // let curr_shard_addrs = connections_container.slot_map.shard_addrs_for_slot(slot);
         // Check if the new primary is part of the current shard and update if required
         if let Some(curr_shard_addrs) = curr_shard_addrs {
+            println!("curr_shard_addrs: {curr_shard_addrs:?}");
+
             match curr_shard_addrs.attempt_shard_role_update(new_primary.clone()) {
                 // Scenario 1: No changes needed as the new primary is already the current slot owner.
                 // Scenario 2: Failover occurred and the new primary was promoted from a replica.
@@ -1925,6 +1935,7 @@ where
         }
 
         // Scenario 3 & 4: Check if the new primary exists in other shards
+        println!("checking if the new primary exists in other shards");
 
         let mut wlock_conn_container = inner.conn_lock.write().expect(MUTEX_READ_ERR);
         let mut nodes_iter = wlock_conn_container.slot_map_nodes();
@@ -1934,6 +1945,7 @@ where
                 if is_existing_primary {
                     // Scenario 3: Slot Migration - The new primary is an existing primary in another shard
                     // Update the associated addresses for `slot` to `shard_addrs`.
+                    println!("updating slot mapping for slot {slot} to new shard addresses");
                     drop(nodes_iter);
                     return wlock_conn_container
                         .slot_map
@@ -2091,6 +2103,7 @@ where
             .map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_command(&cmd)
             .await
+            .and_then(|value| value.extract_error())
             .map(Response::Single)
             .map_err(|err| (address.into(), err))
     }
@@ -2118,8 +2131,11 @@ where
                 count,
                 route,
                 sub_pipeline,
+                retry: retries,
             } => {
                 if pipeline.is_atomic() || sub_pipeline {
+                    println!("pipeline is atomic or sub_pipeline");
+
                     // If the pipeline is atomic (i.e., a transaction) or if the pipeline is already splitted into sub-pipelines, we can send it as is, with no need to split it into sub-pipelines.
                     Self::try_pipeline_request(
                         pipeline,
@@ -2160,27 +2176,23 @@ where
                     //   for execution on a node.
                     // - `addresses_and_indices`: A vector of tuples where each tuple contains a node address and a list
                     //   of command indices for each sub-pipeline, allowing the results to be mapped back to their original command within the original pipeline.
-                    let (receivers, pending_requests, addresses_and_indices) =
-                        collect_pipeline_requests(pipelines_by_connection);
-
-                    // Add the pending requests to the pending_requests queue
-                    core.pending_requests
-                        .lock()
-                        .unwrap()
-                        .extend(pending_requests.into_iter());
-
-                    // Wait for all receivers to complete and collect the responses
-                    let responses: Vec<_> = futures::future::join_all(receivers.into_iter())
-                        .await
-                        .into_iter()
-                        .collect();
+                    let (responses, addresses_and_indices) = collect_and_send_pending_requests(
+                        pipelines_by_connection,
+                        core.clone(),
+                        retries,
+                    )
+                    .await;
 
                     // Process the responses and update the pipeline_responses
-                    process_pipeline_responses(
+                    process_and_retry_pipeline_responses(
                         &mut pipeline_responses,
                         responses,
                         addresses_and_indices,
-                    )?;
+                        &pipeline,
+                        core,
+                        retries,
+                    )
+                    .await?;
 
                     // Process response policies after all tasks are complete
                     Self::aggregate_pipeline_multi_node_commands(
@@ -2191,8 +2203,14 @@ where
 
                     // Collect final responses
                     for mut value in pipeline_responses.into_iter() {
+                        println!("value: {:?}", value);
+                        let value = value.pop().unwrap().0;
+                        /*if let Value::ServerError(err) = value {
+                            return Err((OperationTarget::FanOut, err.clone().into()));
+                        }*/
                         // unwrap() is safe here because we know that the vector is not empty
-                        final_responses.push(value.pop().unwrap().0);
+                        final_responses.push(value);
+
                     }
 
                     Ok(Response::Multiple(final_responses))
@@ -2698,6 +2716,7 @@ where
     }
 
     fn start_send(self: Pin<&mut Self>, msg: Message<C>) -> Result<(), Self::Error> {
+        println!("Start send 2");
         let Message { cmd, sender } = msg;
 
         let info = RequestInfo { cmd };

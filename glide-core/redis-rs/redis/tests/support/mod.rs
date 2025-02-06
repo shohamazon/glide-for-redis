@@ -602,6 +602,7 @@ where
             }
             Ok(())
         }
+        Value::ServerError(ref _err) => todo!(),
     }
 }
 

@@ -888,6 +888,7 @@ impl<C: Connect + ConnectionLike> ConnectionLike for ClusterConnection<C> {
         offset: usize,
         count: usize,
     ) -> RedisResult<Vec<Value>> {
+        println!("this is 1");
         let actual_cmd = if cmd.starts_with(MULTI) {
             &cmd[MULTI.len()..]
         } else {

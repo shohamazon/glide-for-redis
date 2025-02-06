@@ -378,7 +378,13 @@ impl Client {
         let values = values
             .into_iter()
             .zip(pipeline.cmd_iter().map(expected_type_for_cmd))
-            .map(|(value, expected_type)| convert_to_expected_type(value, expected_type))
+            .map(|(value, expected_type)| {
+                if let Value::ServerError(_) = value {
+                    Ok(value)
+                } else {
+                    convert_to_expected_type(value, expected_type)
+                }
+            })
             .try_fold(
                 Vec::with_capacity(command_count),
                 |mut acc, result| -> RedisResult<_> {
@@ -394,6 +400,7 @@ impl Client {
         pipeline: &'a redis::Pipeline,
         routing: Option<RoutingInfo>,
     ) -> redis::RedisFuture<'a, Value> {
+        println!("lalala");
         let command_count = pipeline.cmd_iter().count();
         let offset = command_count + 1;
         run_with_timeout(Some(self.request_timeout), async move {

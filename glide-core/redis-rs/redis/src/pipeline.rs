@@ -1,5 +1,7 @@
 #![macro_use]
 
+use rand::seq::index;
+
 use crate::cmd::{cmd, cmd_len, Cmd};
 use crate::connection::ConnectionLike;
 use crate::types::{
@@ -7,7 +9,7 @@ use crate::types::{
 };
 
 /// Represents a redis command pipeline.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Pipeline {
     commands: Vec<Cmd>,
     transaction_mode: bool,
@@ -221,6 +223,11 @@ impl Pipeline {
     pub fn is_empty(&self) -> bool {
         self.commands.is_empty()
     }
+
+    pub fn get_command(&self, index: usize) -> Option<&Cmd> {
+        self.commands.get(index)
+    }
+
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {

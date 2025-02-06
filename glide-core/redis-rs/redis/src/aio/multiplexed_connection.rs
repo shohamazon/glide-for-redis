@@ -146,11 +146,13 @@ where
                     return Poll::Ready(Err(()));
                 }
             };
+            println!("In poll_read, item: {:?}", item);
             self.as_mut().send_result(item);
         }
     }
 
     fn send_result(self: Pin<&mut Self>, result: RedisResult<Value>) {
+        println!("In send_result, result: {:?}", result);
         let self_ = self.project();
         let mut skip_value = false;
         if let Ok(res) = &result {
@@ -184,10 +186,13 @@ where
                 first_err,
             } => {
                 match result {
+                    // shalom
                     Ok(item) => {
+                        println!("In send_result, Ok(item) {item:?}");
                         buffer.push(item);
                     }
                     Err(err) => {
+                        println!("In send_result, Err(err) {err:?}");
                         if first_err.is_none() {
                             *first_err = Some(err);
                         }
@@ -205,6 +210,8 @@ where
                     Some(err) => Err(err),
                     None => Ok(Value::Array(std::mem::take(buffer))),
                 };
+
+                println!("In send_result, response: {response:?}");
 
                 // `Err` means that the receiver was dropped in which case it does not
                 // care about the output and we can continue by just dropping the value
@@ -243,6 +250,7 @@ where
             pipeline_response_count,
         }: PipelineMessage<SinkItem>,
     ) -> Result<(), Self::Error> {
+        println!("In start_send");
         // If there is nothing to receive our output we do not need to send the message as it is
         // ambiguous whether the message will be sent anyway. Helps shed some load on the
         // connection.
@@ -352,6 +360,7 @@ where
         item: SinkItem,
         timeout: Duration,
     ) -> Result<Value, RedisError> {
+        println!("In send_single");
         self.send_recv(item, None, timeout).await
     }
 
@@ -374,7 +383,7 @@ where
             .map_err(|err| {
                 // If an error occurs here, it means the request never reached the server, as guaranteed
                 // by the 'send' function. Since the server did not receive the data, it is safe to retry
-                // the request.
+                // the request - even as a pipeline.
                 RedisError::from((
                     crate::ErrorKind::FatalSendError,
                     "Failed to send the request to the server",
@@ -699,6 +708,7 @@ impl ConnectionLike for MultiplexedConnection {
         offset: usize,
         count: usize,
     ) -> RedisFuture<'a, Vec<Value>> {
+        println!("this is 4");
         (async move { self.send_packed_commands(cmd, offset, count).await }).boxed()
     }
 

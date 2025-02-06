@@ -6,7 +6,8 @@ mod test_cluster_scan_async {
     use crate::support::*;
     use rand::Rng;
     use redis::cluster_routing::{
-        MultipleNodeRoutingInfo, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+        MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
+        SlotAddr,
     };
     use redis::{
         cmd, from_redis_value, ClusterScanArgs, ObjectType, RedisResult, ScanStateRC, Value,
@@ -103,6 +104,134 @@ mod test_cluster_scan_async {
             .route_command(&shutdown_cmd, random_node_route_info.clone())
             .await;
         random_node_route_info
+    }
+
+    /// Moves a specific slot from its current node to a different node in a Redis cluster.
+    ///
+    /// This function assumes that the slot is already present in the cluster and that we are
+    /// selecting a new node to move the slot to.
+    ///
+    /// # Parameters
+    /// - `cluster`: The test cluster context.
+    /// - `slot_to_move`: The slot ID that we want to move.
+    /// - `slot_distribution`: The current distribution of slots across the cluster.
+    ///
+    /// # Returns
+    /// - The `RoutingInfo` for the node to which the slot was moved.
+    pub async fn move_specific_slot(
+        cluster: &TestClusterContext,
+        slot_to_move: u16,
+        slot_distribution: Vec<(String, String, String, Vec<Vec<u16>>)>,
+    ) -> RoutingInfo {
+        let mut cluster_conn = cluster.async_connection(None).await;
+        let distribution_clone = slot_distribution.clone();
+
+        println!("slot_distribution: {:?}", distribution_clone);
+
+        // Find the node currently responsible for the slot
+        let current_node = distribution_clone
+            .iter()
+            .find(|&(_, _, _, slots)| {
+                slots
+                    .iter()
+                    .any(|slot| slot[0] <= slot_to_move && slot_to_move <= slot[1])
+            })
+            .unwrap();
+        let current_node_id = &current_node.0;
+        let current_node_route_info = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: current_node.1.clone(),
+            port: current_node.2.parse::<u16>().unwrap(),
+        });
+
+        // Select a random node to move the slot to, different from the current node
+        let destination_node = distribution_clone
+            .iter()
+            .find(|node| node.0 != *current_node_id)
+            .unwrap();
+
+        // Update the slot by moving it to the new node
+        let mut move_cmd = cmd("CLUSTER");
+        move_cmd
+            .arg("SETSLOT")
+            .arg(slot_to_move)
+            .arg("NODE")
+            .arg(destination_node.0.clone());
+
+        let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+            slot_to_move,
+            SlotAddr::Master,
+        )));
+
+        let all_nodes = RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None));
+
+        let _: RedisResult<Value> = cluster_conn.route_command(&move_cmd, all_nodes).await;
+
+        let node_route = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: destination_node.1.clone(),
+            port: destination_node.2.parse::<u16>().unwrap(),
+        });
+        // Inform the destination node that it should now own the slot
+        let mut add_slot_cmd = cmd("CLUSTER");
+        add_slot_cmd.arg("ADDSLOTS").arg(slot_to_move);
+        let _: RedisResult<Value> = cluster_conn
+            .route_command(&add_slot_cmd, node_route.clone())
+            .await;
+
+        // Tell the cluster to forget the slot in the old node
+        /*let mut forget_cmd = cmd("CLUSTER");
+        forget_cmd.arg("FORGET").arg(current_node_id);
+        let _: RedisResult<Value> = cluster_conn
+            .route_command(&forget_cmd, node_route.clone())
+            .await;*/
+
+        // Return the RoutingInfo for the destination node
+        RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
+            host: destination_node.1.clone(),
+            port: destination_node.2.parse::<u16>().unwrap(),
+        })
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn test_pipeline() {
+        let cluster = TestClusterContext::new_with_cluster_client_builder(
+            3, // Number of masters
+            0, // No replicas
+            |builder| builder.retries(1),
+            false,
+        );
+
+        let mut connection = cluster.async_connection(None).await;
+
+        // Get initial slot distribution
+        let slot_distribution =
+            cluster.get_slots_ranges_distribution(&cluster.get_cluster_nodes().await);
+
+        // Kill a random node
+        let _killed_node = move_specific_slot(&cluster, 9189, slot_distribution).await;
+
+        // Allow some time for the cluster to adjust
+        //sleep(Duration::from_secs(5)).await;
+
+        // Create a pipeline
+        let mut pipeline = redis::pipe();
+        pipeline
+            .set("key1", "value1")
+            .get("key2")
+            .del("key3")
+            .get("key1")
+            .mget("{key1}")
+            .arg("key1")
+            .arg("{key1}2")
+            .get("key4")
+            .get("key5");
+
+        // Execute the pipeline and check for MOVED error
+        let result: RedisResult<Vec<Value>> = connection
+            .route_pipeline(&pipeline, 0, 3, SingleNodeRoutingInfo::Random)
+            .await;
+
+        println!("result: {:?}", result);
     }
 
     #[tokio::test]
