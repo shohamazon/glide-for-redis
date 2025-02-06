@@ -227,6 +227,7 @@ impl Pipeline {
     pub fn get_command(&self, index: usize) -> Option<&Cmd> {
         self.commands.get(index)
     }
+
 }
 
 fn encode_pipeline(cmds: &[Cmd], atomic: bool) -> Vec<u8> {

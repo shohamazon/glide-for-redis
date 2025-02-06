@@ -46,6 +46,7 @@ use dashmap::DashMap;
 use pipeline_routing::{
     collect_and_send_pending_requests, collect_pipeline_requests, handle_moved_commands,
     map_pipeline_to_nodes, process_and_retry_pipeline_responses, process_pipeline_responses,
+
     route_for_pipeline, PipelineResponses,
 };
 use std::{
@@ -294,6 +295,7 @@ where
                     route: route.into(),
                     sub_pipeline: false,
                     retry: 0,
+
                 },
                 sender,
             })
@@ -617,6 +619,7 @@ enum CmdArg<C> {
         route: InternalSingleNodeRouting<C>,
         sub_pipeline: bool,
         retry: u32,
+
     },
     ClusterScan {
         // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
@@ -2132,6 +2135,7 @@ where
             } => {
                 if pipeline.is_atomic() || sub_pipeline {
                     println!("pipeline is atomic or sub_pipeline");
+
                     // If the pipeline is atomic (i.e., a transaction) or if the pipeline is already splitted into sub-pipelines, we can send it as is, with no need to split it into sub-pipelines.
                     Self::try_pipeline_request(
                         pipeline,
@@ -2206,6 +2210,7 @@ where
                         }*/
                         // unwrap() is safe here because we know that the vector is not empty
                         final_responses.push(value);
+
                     }
 
                     Ok(Response::Multiple(final_responses))

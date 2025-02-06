@@ -1370,6 +1370,7 @@ mod socket_listener {
                 Value::BulkString(vec![b'H', b'E', b'L', b'L', b'O']),
             ]),
         );*/
+
     }
     #[rstest]
     #[serial_test::serial]

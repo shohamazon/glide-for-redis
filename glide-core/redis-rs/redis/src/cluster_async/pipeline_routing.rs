@@ -25,6 +25,7 @@ use super::{Core, InternalSingleNodeRouting, OperationTarget, Response};
 
 /// Represents a pipeline command execution context for a specific node
 #[derive(Default, Debug)]
+
 pub struct NodePipelineContext<C> {
     /// The pipeline of commands to be executed
     pub pipeline: Pipeline,
@@ -145,6 +146,7 @@ where
                 )
                 .await
                 .map_err(|(_target, err)| err)?; // todo - handle error
+
             }
 
             cluster_routing::RoutingInfo::MultiNode((multi_node_routing, response_policy)) => {
