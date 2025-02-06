@@ -6,7 +6,8 @@ mod test_cluster_scan_async {
     use crate::support::*;
     use rand::Rng;
     use redis::cluster_routing::{
-        MultipleNodeRoutingInfo, ResponsePolicy, RoutingInfo, SingleNodeRoutingInfo,
+        MultipleNodeRoutingInfo, ResponsePolicy, Route, RoutingInfo, SingleNodeRoutingInfo,
+        SlotAddr,
     };
     use redis::{
         cmd, from_redis_value, ClusterScanArgs, ObjectType, RedisResult, ScanStateRC, Value,
@@ -156,12 +157,14 @@ mod test_cluster_scan_async {
             .arg("NODE")
             .arg(destination_node.0.clone());
 
-        let _: RedisResult<Value> = cluster_conn
-            .route_command(
-                &move_cmd,
-                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
-            )
-            .await;
+        let routing = RoutingInfo::SingleNode(SingleNodeRoutingInfo::SpecificNode(Route::new(
+            slot_to_move,
+            SlotAddr::Master,
+        )));
+
+        let all_nodes = RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None));
+
+        let _: RedisResult<Value> = cluster_conn.route_command(&move_cmd, all_nodes).await;
 
         let node_route = RoutingInfo::SingleNode(SingleNodeRoutingInfo::ByAddress {
             host: destination_node.1.clone(),

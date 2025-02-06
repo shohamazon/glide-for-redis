@@ -282,6 +282,7 @@ pub async fn handle_pipeline_multi_slot_routing<C>(
 #[allow(clippy::type_complexity)]
 pub fn collect_pipeline_requests<C>(
     pipelines_by_connection: NodePipelineMap<C>,
+    retry: u32,
 ) -> (
     Vec<oneshot::Receiver<RedisResult<Response>>>,
     Vec<PendingRequest<C>>,
@@ -300,7 +301,7 @@ where
         // Add the receiver to the list of receivers
         receivers.push(receiver);
         pending_requests.push(PendingRequest {
-            retry: 0,
+            retry,
             sender,
             info: RequestInfo {
                 cmd: CmdArg::Pipeline {
@@ -313,6 +314,7 @@ where
                     },
                     // mark it as a sub-pipeline mode
                     sub_pipeline: true,
+                    retry,
                 },
             },
         });
@@ -466,6 +468,7 @@ where
 pub async fn collect_and_send_pending_requests<C>(
     pipeline_map: NodePipelineMap<C>,
     core: Core<C>,
+    retry: u32,
 ) -> (
     Vec<Result<RedisResult<Response>, RecvError>>,
     Vec<(String, Vec<(usize, Option<usize>)>)>,
@@ -474,7 +477,7 @@ where
     C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
 {
     let (receivers, pending_requests, addresses_and_indices) =
-        collect_pipeline_requests(pipeline_map);
+        collect_pipeline_requests(pipeline_map, retry);
 
     // Add the pending requests to the pending_requests queue
     core.pending_requests
@@ -512,6 +515,7 @@ pub async fn handle_moved_commands<C>(
     moved_error_indices: Vec<(usize, Option<usize>)>,
     errors: Vec<RedisError>,
     core: Core<C>,
+    retry: u32,
 ) -> Result<
     (
         Vec<Result<RedisResult<Response>, RecvError>>,
@@ -545,7 +549,7 @@ where
         }
     }
 
-    Ok(collect_and_send_pending_requests(pipeline_map, core).await)
+    Ok(collect_and_send_pending_requests(pipeline_map, core, retry).await)
 }
 
 /// Processes the pipeline responses and handles any MOVED errors by retrying the commands.
@@ -571,11 +575,11 @@ pub async fn process_and_retry_pipeline_responses<C>(
     mut addresses_and_indices: AddressAndIndices,
     pipeline: &crate::Pipeline,
     core: Core<C>,
+    mut retry: u32,
 ) -> Result<(), (OperationTarget, RedisError)>
 where
     C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
 {
-    let mut retries = 10;
     loop {
         match process_pipeline_responses(
             pipeline_responses,
@@ -589,19 +593,18 @@ where
                 if moved_error_indices.is_empty() {
                     break Ok(());
                 }
-                (responses, addresses_and_indices) =
-                    handle_moved_commands(pipeline, moved_error_indices, errors, core.clone())
-                        .await?;
+                retry = retry + 1;
+                (responses, addresses_and_indices) = handle_moved_commands(
+                    pipeline,
+                    moved_error_indices,
+                    errors,
+                    core.clone(),
+                    retry,
+                )
+                .await?;
             }
 
             Err(e) => break Err(e),
-        }
-        retries -= 1;
-        if retries == 0 {
-            break Err((
-                OperationTarget::NotFound,
-                RedisError::from((ErrorKind::ResponseError, "Too many retries")),
-            ));
         }
     }
 }

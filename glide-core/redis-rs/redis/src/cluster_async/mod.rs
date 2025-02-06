@@ -293,6 +293,7 @@ where
                     count,
                     route: route.into(),
                     sub_pipeline: false,
+                    retry: 0,
                 },
                 sender,
             })
@@ -615,6 +616,7 @@ enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
         sub_pipeline: bool,
+        retry: u32,
     },
     ClusterScan {
         // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
@@ -2126,6 +2128,7 @@ where
                 count,
                 route,
                 sub_pipeline,
+                retry: retries,
             } => {
                 if pipeline.is_atomic() || sub_pipeline {
                     println!("pipeline is atomic or sub_pipeline");
@@ -2169,9 +2172,12 @@ where
                     //   for execution on a node.
                     // - `addresses_and_indices`: A vector of tuples where each tuple contains a node address and a list
                     //   of command indices for each sub-pipeline, allowing the results to be mapped back to their original command within the original pipeline.
-                    let (responses, addresses_and_indices) =
-                        collect_and_send_pending_requests(pipelines_by_connection, core.clone())
-                            .await;
+                    let (responses, addresses_and_indices) = collect_and_send_pending_requests(
+                        pipelines_by_connection,
+                        core.clone(),
+                        retries,
+                    )
+                    .await;
 
                     // Process the responses and update the pipeline_responses
                     process_and_retry_pipeline_responses(
@@ -2180,6 +2186,7 @@ where
                         addresses_and_indices,
                         &pipeline,
                         core,
+                        retries,
                     )
                     .await?;
 
