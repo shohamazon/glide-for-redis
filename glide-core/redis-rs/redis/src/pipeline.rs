@@ -176,9 +176,9 @@ fn write_pipeline(rv: &mut Vec<u8>, cmds: &[Arc<Cmd>], atomic: bool) {
     let cmds_len = cmds.iter().map(cmd_len_arc).sum();
 
     if atomic {
-        let multi = Arc::new(cmd("MULTI"));
-        let exec = Arc::new(cmd("EXEC"));
-        rv.reserve(cmd_len(&*multi) + cmd_len(&*exec) + cmds_len);
+        let multi = cmd("MULTI");
+        let exec = cmd("EXEC");
+        rv.reserve(cmd_len(&multi) + cmd_len(&exec) + cmds_len);
 
         multi.write_packed_command_preallocated(rv);
         for cmd in cmds {
