@@ -22,6 +22,7 @@ use futures_util::{
 };
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::Arc;
 #[cfg(feature = "tokio-comp")]
 use tokio_util::codec::Decoder;
 
@@ -115,8 +116,8 @@ where
         {
             // Prepare both unsubscribe commands
             let unsubscribe = crate::Pipeline::new()
-                .add_command(cmd("UNSUBSCRIBE"))
-                .add_command(cmd("PUNSUBSCRIBE"))
+                .add_command(Arc::new(cmd("UNSUBSCRIBE")))
+                .add_command(Arc::new(cmd("PUNSUBSCRIBE")))
                 .get_packed_pipeline();
 
             // Execute commands

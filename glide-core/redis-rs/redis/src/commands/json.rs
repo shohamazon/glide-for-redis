@@ -4,6 +4,8 @@ use crate::pipeline::Pipeline;
 use crate::types::{FromRedisValue, RedisResult, ToRedisArgs};
 use crate::RedisError;
 
+use std::sync::Arc;
+
 #[cfg(feature = "cluster")]
 use crate::commands::ClusterPipeline;
 
@@ -143,7 +145,7 @@ macro_rules! implement_json_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> RedisResult<&mut Self> {
-                    self.add_command($body?);
+                    self.add_command(Arc::new($body?));
 					Ok(self)
                 }
             )*
@@ -161,7 +163,7 @@ macro_rules! implement_json_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> RedisResult<&mut Self> {
-                    self.add_command($body?);
+                    self.add_command(Arc::new($body?));
 					Ok(self)
                 }
             )*

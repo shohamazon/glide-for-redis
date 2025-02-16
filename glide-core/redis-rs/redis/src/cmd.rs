@@ -6,7 +6,7 @@ use futures_util::{
 };
 #[cfg(feature = "aio")]
 use std::pin::Pin;
-use std::{fmt, io};
+use std::{fmt, io, sync::Arc};
 
 use crate::connection::ConnectionLike;
 use crate::pipeline::Pipeline;
@@ -218,6 +218,10 @@ where
 }
 
 pub(crate) fn cmd_len(cmd: &Cmd) -> usize {
+    args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
+}
+
+pub(crate) fn cmd_len_arc(cmd: &Arc<Cmd>) -> usize {
     args_len(cmd.args_iter(), cmd.cursor.unwrap_or(0))
 }
 

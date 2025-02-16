@@ -2949,6 +2949,8 @@ impl Connect for MultiplexedConnection {
 
 #[cfg(test)]
 mod pipeline_routing_tests {
+    use std::sync::Arc;
+
     use futures::executor::block_on;
 
     use super::pipeline_routing::route_for_pipeline;
@@ -2968,9 +2970,9 @@ mod pipeline_routing_tests {
         pipeline.atomic();
 
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .add_command(Arc::new(cmd("FLUSHALL"))) // route to all masters
             .get("foo") // route to slot 12182
-            .add_command(cmd("EVAL")); // route randomly
+            .add_command(Arc::new(cmd("EVAL"))); // route randomly
 
         assert_eq!(
             route_for_pipeline(&pipeline),
@@ -3112,8 +3114,8 @@ mod pipeline_routing_tests {
         let mut pipeline = crate::Pipeline::new();
         pipeline.atomic();
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
-            .add_command(cmd("EVAL")); // route randomly
+            .add_command(Arc::new(cmd("FLUSHALL"))) // route to all masters
+            .add_command(Arc::new(cmd("EVAL"))); // route randomly
 
         assert_eq!(route_for_pipeline(&pipeline), Ok(None));
     }
@@ -3124,8 +3126,8 @@ mod pipeline_routing_tests {
         pipeline.atomic();
         pipeline
             .get("foo") // route to replica of slot 12182
-            .add_command(cmd("FLUSHALL")) // route to all masters
-            .add_command(cmd("EVAL"))// route randomly
+            .add_command(Arc::new(cmd("FLUSHALL"))) // route to all masters
+            .add_command(Arc::new(cmd("EVAL")))// route randomly
             .cmd("CONFIG").arg("GET").arg("timeout") // unkeyed command
             .set("foo", "bar"); // route to primary of slot 12182
 
@@ -3140,7 +3142,7 @@ mod pipeline_routing_tests {
         let mut pipeline = crate::Pipeline::new();
         pipeline.atomic();
         pipeline
-            .add_command(cmd("FLUSHALL")) // route to all masters
+            .add_command(Arc::new(cmd("FLUSHALL"))) // route to all masters
             .set("baz", "bar") // route to slot 4813
             .get("foo"); // route to slot 12182
 

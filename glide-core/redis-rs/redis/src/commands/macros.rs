@@ -250,7 +250,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                    self.add_command(Arc::new(::std::mem::replace($body, Cmd::new())))
                 }
             )*
         }
@@ -258,6 +258,9 @@ macro_rules! implement_commands {
         // Implements common redis commands for cluster pipelines.  Unlike the regular
         // commands trait, this returns the cluster pipeline rather than a result
         // directly.  Other than that it works the same however.
+        #[cfg(feature = "cluster")]
+        use std::sync::Arc;
+
         #[cfg(feature = "cluster")]
         impl ClusterPipeline {
             $(
@@ -267,7 +270,7 @@ macro_rules! implement_commands {
                 pub fn $name<$lifetime, $($tyargs: $ty),*>(
                     &mut self $(, $argname: $argty)*
                 ) -> &mut Self {
-                    self.add_command(::std::mem::replace($body, Cmd::new()))
+                    self.add_command(Arc::new(::std::mem::replace($body, Cmd::new())))
                 }
             )*
         }

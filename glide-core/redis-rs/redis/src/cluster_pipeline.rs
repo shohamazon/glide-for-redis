@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::cluster::ClusterConnection;
 use crate::cmd::{cmd, Cmd};
 use crate::types::{
@@ -44,7 +46,7 @@ fn is_illegal_cmd(cmd: &str) -> bool {
 /// Represents a Redis Cluster command pipeline.
 #[derive(Clone)]
 pub struct ClusterPipeline {
-    commands: Vec<Cmd>,
+    commands: Vec<Arc<Cmd>>,
     ignored_commands: HashSet<usize>,
 }
 
@@ -84,7 +86,7 @@ impl ClusterPipeline {
         }
     }
 
-    pub(crate) fn commands(&self) -> &Vec<Cmd> {
+    pub(crate) fn commands(&self) -> &Vec<Arc<Cmd>> {
         &self.commands
     }
 
