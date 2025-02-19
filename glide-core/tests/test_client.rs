@@ -1,6 +1,7 @@
 // Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 mod utilities;
+use std::sync::Arc;
 
 #[macro_export]
 /// Compare `$expected` with `$actual`. This macro, will exit the test process
@@ -928,8 +929,8 @@ pub(crate) mod shared_client_tests {
             let mut config_get_cmd = cmd("CONFIG");
             config_get_cmd.arg("GET").arg("appendonly");
             let mut pipeline = Pipeline::new();
-            pipeline.add_command(config_set_cmd); // AllNodes cmd
-            pipeline.add_command(config_get_cmd); // RandomNode cmd
+            pipeline.add_command(Arc::new(config_set_cmd)); // AllNodes cmd
+            pipeline.add_command(Arc::new(config_get_cmd)); // RandomNode cmd
 
             let result = test_basics
                 .client
@@ -966,10 +967,10 @@ pub(crate) mod shared_client_tests {
             .await;
 
             let mut pipeline = Pipeline::new();
-            pipeline.add_command(cmd("PING"));
+            pipeline.add_command(Arc::new(cmd("PING")));
             pipeline.set(generate_random_string(10), "value");
-            pipeline.add_command(cmd("FLUSHALL"));
-            pipeline.add_command(cmd("DBSIZE")); // AllPrimary cmd + SUM aggregation
+            pipeline.add_command(Arc::new(cmd("FLUSHALL")));
+            pipeline.add_command(Arc::new(cmd("DBSIZE"))); // AllPrimary cmd + SUM aggregation
 
             // Execute the pipeline.
             let result = test_basics

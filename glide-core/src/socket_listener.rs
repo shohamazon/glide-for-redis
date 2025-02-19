@@ -24,7 +24,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::ptr::from_mut;
 use std::rc::Rc;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 use std::{env, str};
 use std::{io, thread};
 use thiserror::Error;
@@ -381,7 +381,7 @@ async fn send_batch(
         pipeline.atomic();
     }
     for command in request.commands {
-        pipeline.add_command(get_redis_command(&command)?);
+        pipeline.add_command(Arc::new(get_redis_command(&command)?));
     }
 
     match request.is_atomic {

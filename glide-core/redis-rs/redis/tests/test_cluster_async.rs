@@ -627,8 +627,10 @@ mod cluster_async {
         block_on_all(async move {
             let mut connection = cluster.async_connection(None).await;
             let mut pipe = redis::pipe();
-            pipe.add_command(cmd("SET").arg("test").arg("test_data").clone());
-            pipe.add_command(cmd("SET").arg("{test}3").arg("test_data3").clone());
+            pipe.add_command(Arc::new(cmd("SET").arg("test").arg("test_data").clone()));
+            pipe.add_command(Arc::new(
+                cmd("SET").arg("{test}3").arg("test_data3").clone(),
+            ));
             pipe.query_async(&mut connection).await?;
             let res: String = connection.get("test").await?;
             assert_eq!(res, "test_data");
