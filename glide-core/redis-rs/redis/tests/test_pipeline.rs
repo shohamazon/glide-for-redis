@@ -69,13 +69,13 @@ mod test_pipeline {
             .arg("cluster-require-full-coverage")
             .arg("no");
 
-        connection
-            .route_command(
-                &config_cmd,
-                RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
-            )
-            .await
-            .expect("Failed to set cluster-require-full-coverage to no");
+        /*connection
+        .route_command(
+            &config_cmd,
+            RoutingInfo::MultiNode((MultipleNodeRoutingInfo::AllNodes, None)),
+        )
+        .await
+        .expect("Failed to set cluster-require-full-coverage to no");*/
 
         // Get the initial slot distribution.
         let cluster_nodes = cluster.get_cluster_nodes().await;
@@ -227,7 +227,7 @@ mod test_pipeline {
         let cluster = TestClusterContext::new_with_cluster_client_builder(
             3,
             0,
-            |builder| builder.retries(1),
+            |builder| builder.retries(0),
             false,
         );
         let mut connection = cluster.async_connection(None).await;

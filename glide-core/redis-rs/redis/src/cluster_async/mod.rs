@@ -44,7 +44,7 @@ use crate::{
 use connections_container::{RefreshTaskNotifier, RefreshTaskState, RefreshTaskStatus};
 use dashmap::DashMap;
 use pipeline_routing::{
-    collect_and_send_pending_requests, map_pipeline_to_nodes, process_pipeline_responses,
+    collect_and_send_pending_requests, map_pipeline_to_nodes, process_and_retry_pipeline_responses,
     route_for_pipeline, PipelineResponses,
 };
 use std::{
@@ -292,6 +292,7 @@ where
                     count,
                     route: route.into(),
                     sub_pipeline: false,
+                    retry: 0,
                 },
                 sender,
             })
@@ -614,6 +615,7 @@ enum CmdArg<C> {
         count: usize,
         route: InternalSingleNodeRouting<C>,
         sub_pipeline: bool,
+        retry: u32,
     },
     ClusterScan {
         // struct containing the arguments for the cluster scan command - scan state cursor, match pattern, count and object type.
@@ -881,6 +883,7 @@ impl<C> Future for Request<C> {
 
         match ready!(future.poll(cx)) {
             Ok(item) => {
+                println!("Request future polled Ok {:?}", item);
                 self.respond(Ok(item));
                 Next::Done.into()
             }
@@ -2217,6 +2220,7 @@ where
                 count,
                 route,
                 sub_pipeline,
+                retry,
             } => {
                 if pipeline.is_atomic() || sub_pipeline {
                     // If the pipeline is atomic (i.e., a transaction) or if the pipeline is already splitted into sub-pipelines (i.e., the pipeline is already routed to a specific node), we can send it as is, with no need to split it into sub-pipelines.
@@ -2229,7 +2233,7 @@ where
                     .await
                 } else {
                     // The pipeline is not atomic and not already splitted, we need to split it into sub-pipelines and send them separately.
-                    Self::handle_non_atomic_pipeline_request(pipeline, core).await
+                    Self::handle_non_atomic_pipeline_request(pipeline, core, retry).await
                 }
             }
             CmdArg::ClusterScan {
@@ -2263,6 +2267,7 @@ where
     async fn handle_non_atomic_pipeline_request(
         pipeline: Arc<crate::Pipeline>,
         core: Core<C>,
+        retry: u32,
     ) -> OperationResult {
         // Distribute pipeline commands across cluster nodes based on routing information.
         // Returns:
@@ -2284,10 +2289,18 @@ where
         // - A vector of results for each sub-pipeline execution.
         // - A vector of (address, indices) pairs indicating where each response should be placed.
         let (responses, addresses_and_indices) =
-            collect_and_send_pending_requests(pipelines_by_node, core.clone()).await;
+            collect_and_send_pending_requests(pipelines_by_node, core.clone(), retry).await;
 
         // Process the responses and update the pipeline_responses
-        process_pipeline_responses(&mut pipeline_responses, responses, addresses_and_indices)?;
+        process_and_retry_pipeline_responses(
+            &mut pipeline_responses,
+            responses,
+            addresses_and_indices,
+            &pipeline,
+            core,
+            retry,
+        )
+        .await?;
 
         // Process response policies after all tasks are complete and aggregate the relevant commands.
         Self::aggregate_pipeline_multi_node_commands(&mut pipeline_responses, response_policies)
@@ -2658,14 +2671,24 @@ where
             }
         }
     }
-
-    async fn handle_loading_error(
+    async fn handle_loading_error_and_retry(
         core: Core<C>,
         info: RequestInfo<C>,
         address: String,
         retry: u32,
         retry_params: RetryParams,
     ) -> OperationResult {
+        Self::handle_loading_error(core.clone(), address, retry, retry_params).await;
+        Self::try_request(info, core).await
+    }
+
+    async fn handle_loading_error(
+        core: Core<C>,
+        address: String,
+        retry: u32,
+        retry_params: RetryParams,
+    ) {
+        // todo - handle_loading_error_and_retry
         let is_primary = core
             .conn_lock
             .read()
@@ -2684,8 +2707,6 @@ where
             let sleep_duration = retry_params.wait_time_for_retry(retry);
             boxed_sleep(sleep_duration).await;
         }
-
-        Self::try_request(info, core).await
     }
 
     fn poll_complete(&mut self, cx: &mut task::Context<'_>) -> Poll<PollFlushAction> {
@@ -2736,7 +2757,7 @@ where
                 }
                 Next::RetryBusyLoadingError { request, address } => {
                     // TODO - do we also want to try and reconnect to replica if it is loading?
-                    let future = Self::handle_loading_error(
+                    let future = Self::handle_loading_error_and_retry(
                         self.inner.clone(),
                         request.info.clone(),
                         address,

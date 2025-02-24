@@ -384,6 +384,8 @@ async fn send_batch(
         pipeline.add_command(get_redis_command(&command)?);
     }
 
+    println!("Is atomic: {}", request.is_atomic);
+
     match request.is_atomic {
         true => client
             .send_transaction(&pipeline, routing)
