@@ -39,6 +39,14 @@ class TimeoutError(RequestError):
     pass
 
 
+class Shoham(RequestError):
+    """
+    Errors that are thrown when a request times out.
+    """
+
+    pass
+
+
 class ExecAbortError(RequestError):
     """
     Errors that are thrown when a transaction is aborted.

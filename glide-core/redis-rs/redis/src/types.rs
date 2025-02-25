@@ -604,39 +604,57 @@ impl Value {
         }
     }
 
-    /// If value contains a server error, return it as an Err. Otherwise wrap the value in Ok.
-    pub fn extract_error(self) -> RedisResult<Self> {
-        println!("extract_error: {:?}", self);
+    /// Extracts errors from the value recursively.
+    /// If the value contains a server error and its kind matches the provided `ignore` kind,
+    /// that error is ignored (i.e. the original value is returned as Ok).
+    /// Otherwise, errors are propagated as Err.
+    pub fn extract_error(self, ignore: Option<ErrorKind>) -> RedisResult<Self> {
         match self {
-            Self::Array(val) => Ok(Self::Array(Self::extract_error_vec(val)?)),
-            Self::Map(map) => Ok(Self::Map(Self::extract_error_map(map)?)),
+            Self::Array(val) => Ok(Self::Array(Self::extract_error_vec(val, ignore)?)),
+            Self::Map(map) => Ok(Self::Map(Self::extract_error_map(map, ignore)?)),
             Self::Attribute { data, attributes } => {
-                let data = Box::new((*data).extract_error()?);
-                let attributes = Self::extract_error_map(attributes)?;
+                let data = Box::new((*data).extract_error(ignore)?);
+                let attributes = Self::extract_error_map(attributes, ignore)?;
                 Ok(Value::Attribute { data, attributes })
             }
-            Self::Set(set) => Ok(Self::Set(Self::extract_error_vec(set)?)),
+            Self::Set(set) => Ok(Self::Set(Self::extract_error_vec(set, ignore)?)),
             Self::Push { kind, data } => Ok(Self::Push {
                 kind,
-                data: Self::extract_error_vec(data)?,
+                data: Self::extract_error_vec(data, ignore)?,
             }),
-            Value::ServerError(err) => Err(err.into()),
+            Value::ServerError(err) => {
+                // If an ignore kind is provided and the error matches it,
+                // return Ok(self) so that the error is ignored.
+                if let Some(ignore_kind) = ignore {
+                    println!("Error kind: {:?}", err.kind());
+                    if err.kind() == ignore_kind {
+                        return Ok(Value::ServerError(err));
+                    }
+                }
+                Err(err.into())
+            }
             _ => Ok(self),
         }
     }
 
-    fn extract_error_vec(vec: Vec<Self>) -> RedisResult<Vec<Self>> {
-        vec.into_iter()
-            .map(Self::extract_error)
-            .collect::<RedisResult<Vec<_>>>()
+    /// Helper function to process a vector of values.
+    pub(crate) fn extract_error_vec(
+        vec: Vec<Self>,
+        ignore: Option<ErrorKind>,
+    ) -> RedisResult<Vec<Self>> {
+        vec.into_iter().map(|v| v.extract_error(ignore)).collect()
     }
 
-    fn extract_error_map(map: Vec<(Self, Self)>) -> RedisResult<Vec<(Self, Self)>> {
-        let mut vec = Vec::with_capacity(map.len());
+    /// Helper function to process a map of key/value pairs.
+    fn extract_error_map(
+        map: Vec<(Self, Self)>,
+        ignore: Option<ErrorKind>,
+    ) -> RedisResult<Vec<(Self, Self)>> {
+        let mut out = Vec::with_capacity(map.len());
         for (key, value) in map.into_iter() {
-            vec.push((key.extract_error()?, value.extract_error()?));
+            out.push((key.extract_error(ignore)?, value.extract_error(ignore)?));
         }
-        Ok(vec)
+        Ok(out)
     }
 }
 

@@ -184,6 +184,7 @@ async fn write_result(
     let mut response = Response::new();
     response.callback_idx = callback_index;
     response.is_push = false;
+    println!("Received response: {:?}", resp_result);
     response.value = match resp_result {
         Ok(Value::Okay) => Some(response::response::Value::ConstantResponse(
             response::ConstantResponse::OK.into(),

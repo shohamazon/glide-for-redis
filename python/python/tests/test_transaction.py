@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional, Union, cast
 
 import pytest
-from glide import RequestError
+from glide import RequestError, Shoham
 from glide.async_commands.bitmap import (
     BitFieldGet,
     BitFieldSet,
@@ -1008,7 +1008,21 @@ class TestTransaction:
         with pytest.raises(RequestError) as e:
             await self.exec_transaction(glide_client, transaction)
 
-        assert "not allowed" in str(e)  # TODO : add an assert on EXEC ABORT
+    @pytest.mark.parametrize("cluster_mode", [True])
+    @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP3])
+    async def test_shoham(self, glide_client: TGlideClient):
+        key = get_random_string(10)
+        transaction = (
+            Transaction()
+            if isinstance(glide_client, GlideClient)
+            else ClusterTransaction()
+        )
+        transaction.set(key, "1")
+        transaction.llen(key)
+
+        x = await self.exec_transaction(glide_client, transaction)
+        print(x)
+        assert type(x[1]) == Shoham
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])

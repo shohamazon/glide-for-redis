@@ -3,6 +3,8 @@ package glide.cluster;
 
 import static glide.TestConfiguration.SERVER_VERSION;
 import static glide.TestUtilities.assertDeepEquals;
+import glide.api.models.exceptions.RequestException;
+
 import static glide.TestUtilities.commonClusterClientConfig;
 import static glide.TestUtilities.generateLuaLibCode;
 import static glide.api.BaseClient.OK;
@@ -222,6 +224,28 @@ public class ClusterTransactionTests {
         assertEquals(3L, result[0]);
         assertArrayEquals(new Object[] {0L, 1.0}, (Object[]) result[1]);
         assertArrayEquals(new Object[] {2L, 1.0}, (Object[]) result[2]);
+    }
+
+    @ParameterizedTest
+    @MethodSource("getClients")
+    @SneakyThrows
+    public void shoham(GlideClusterClient clusterClient) {
+        String key1 = "{key}-1" + UUID.randomUUID();
+        ClusterTransaction transaction = new ClusterTransaction();
+        transaction.set(key1, "foobar").llen(key1);
+        var x = clusterClient.exec(transaction).get();
+
+       if (x instanceof Object[]) {
+            Object[] array = (Object[]) x;
+            System.out.println("Array length: " + array.length);
+            for (int i = 0; i < array.length; i++) {
+                System.out.println("Element " + i + ": " + array[i] + " (Type: " + (array[i] != null ? array[i].getClass().getName() : "null") + ")");
+            }
+            assertTrue(array[1] instanceof RequestException, "Second element should be an instance of RequestException");
+            } else {
+                System.out.println("Unexpected type: " + x.getClass().getName());
+            }
+
     }
 
     @ParameterizedTest

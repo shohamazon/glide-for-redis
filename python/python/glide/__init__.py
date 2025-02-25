@@ -150,6 +150,7 @@ from glide.exceptions import (
     ExecAbortError,
     GlideError,
     RequestError,
+    Shoham,
     TimeoutError,
 )
 from glide.glide_client import GlideClient, GlideClusterClient, TGlideClient
@@ -185,6 +186,7 @@ __all__ = [
     "GlideClusterClientConfiguration",
     "BackoffStrategy",
     "ReadFrom",
+    "Shoham",
     "ServerCredentials",
     "NodeAddress",
     "ProtocolVersion",

@@ -690,15 +690,15 @@ where
     C: Clone + ConnectionLike + Connect + Send + Sync + 'static,
 {
     // Extract unique addresses from the provided error entries.
-    let addresses: HashSet<&String> = indices_addresses_and_error
+    let addresses: HashSet<String> = indices_addresses_and_error
         .iter()
-        .map(|(_, address, _)| address)
+        .map(|(_, address, _)| address.clone())
         .collect();
 
     // Refresh the connections for the affected addresses.
-    ClusterConnInner::refresh_connections(
+    ClusterConnInner::refresh_and_update_connections(
         core.clone(),
-        addresses.iter().map(|addr| (*addr).clone()).collect(),
+        addresses,
         RefreshConnectionType::OnlyUserConnection,
         true,
     )

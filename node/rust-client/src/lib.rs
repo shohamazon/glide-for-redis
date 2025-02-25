@@ -1,6 +1,7 @@
 // Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 use glide_core::Telemetry;
+use napi::JsFunction;
 use redis::GlideConnectionOptions;
 
 #[cfg(not(target_env = "msvc"))]
@@ -276,6 +277,20 @@ fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsU
                 .collect::<Result<Vec<_>, _>>()?;
             obj.set_named_property("values", js_array_view)?;
             Ok(obj.into_unknown())
+        }
+        Value::ServerError(error) => {
+            let err_msg = format!("{:?}", error);
+
+            // Get the global `RequestError` constructor from JavaScript
+            let global = js_env.get_global()?;
+            let request_error_ctor: JsFunction = global.get_named_property("RequestError")?;
+
+            // Create an instance of `RequestError` with the message
+            let error_instance =
+                request_error_ctor.new_instance(&[js_env.create_string(err_msg.as_str())?])?;
+
+            // Return the error instance as a normal JS object (not throwing)
+            Ok(error_instance.into_unknown())
         }
     }
 }

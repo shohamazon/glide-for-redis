@@ -2193,6 +2193,7 @@ where
             .map_err(|err| (OperationTarget::NotFound, err))?;
         conn.req_packed_command(&cmd)
             .await
+            .and_then(|value| value.extract_error(None))
             .map(Response::Single)
             .map_err(|err| (address.into(), err))
     }
@@ -2205,10 +2206,21 @@ where
     ) -> OperationResult {
         trace!("try_pipeline_request");
         let (address, mut conn) = conn.await.map_err(|err| (OperationTarget::NotFound, err))?;
-        conn.req_packed_commands(&pipeline, offset, count)
+        let res = conn
+            .req_packed_commands(&pipeline, offset, count)
             .await
-            .map(Response::Multiple)
-            .map_err(|err| (OperationTarget::Node { address }, err))
+            .and_then(|value| {
+                if pipeline.is_atomic() {
+                    Ok(value)
+                } else {
+                    Ok(value)
+                }
+            })
+            .map(Response::Multiple);
+
+        println!("res: {:?}", res);
+
+        res.map_err(|err| (address.into(), err))
     }
 
     async fn try_request(info: RequestInfo<C>, core: Core<C>) -> OperationResult {
