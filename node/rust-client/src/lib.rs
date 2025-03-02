@@ -1,7 +1,13 @@
 // Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
+use glide_core::request_type::RequestType;
 use glide_core::Telemetry;
+use napi::CallContext;
 use napi::JsFunction;
+use napi::JsString;
+use napi::JsUndefined;
+use napi::Property;
+use napi_derive::js_function;
 use redis::GlideConnectionOptions;
 
 #[cfg(not(target_env = "msvc"))]
@@ -28,6 +34,7 @@ use std::collections::HashMap;
 use std::ptr::from_mut;
 use std::str;
 use tokio::runtime::{Builder, Runtime};
+
 #[napi]
 pub enum Level {
     Debug = 3,
@@ -175,6 +182,34 @@ pub fn init(level: Option<Level>, file_name: Option<&str>) -> Level {
     logger_level.into()
 }
 
+#[napi(js_name = "RequestError")]
+pub struct RequestError {
+    message: String,
+}
+
+// #[js_function(1)]
+// fn request_error_constructor(ctx: CallContext<'_>) -> JS<JsUnknown> {
+//     // Get the error message (expecting a string as first argument)
+// }
+
+// #[js_function(1)]
+// fn add_message(ctx: CallContext) -> Result<JsString> {
+//     let new_msg: String = ctx.get::<JsString>(0)?.into_utf8()?.into_owned()?;
+//     let this: JsObject = ctx.this_unchecked();
+//     let request_error: &mut RequestError = ctx.env.unwrap(&this)?;
+
+//     request_error.message.push_str(&new_msg); // Append the new message
+//     ctx.env.create_string(&request_error.message) // Return updated message
+// }
+
+// #[js_function(1)]
+// fn get_message(ctx: CallContext) -> Result<JsString> {
+//     let this: JsObject = ctx.this_unchecked();
+//     let request_error: &RequestError = ctx.env.unwrap(&this)?;
+//     println!("Getting message: {}", request_error.message);
+//     ctx.env.create_string(&request_error.message)
+// }
+
 fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsUnknown> {
     match val {
         Value::Nil => js_env.get_null().map(|val| val.into_unknown()),
@@ -281,22 +316,16 @@ fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsU
         Value::ServerError(error) => {
             let err_msg = format!("{:?}", error);
 
-            // Get the global `RequestError` constructor from JavaScript
-            let global = js_env.get_global()?;
-            let request_error_ctor: JsFunction = global.get_named_property("RequestError")?;
-
-            // Create an instance of `RequestError` with the message
-            let error_instance =
-                request_error_ctor.new_instance(&[js_env.create_string(err_msg.as_str())?])?;
-
-            // Return the error instance as a normal JS object (not throwing)
-            Ok(error_instance.into_unknown())
+            // Return a new RequestError object from the js type
+            let mut global = js_env.get_global()?;
+            let request_error: &RequestError = global.get_named_property("RequestError")?;
+            Ok(request_error.new(err_msg).into_unknown())
         }
     }
 }
 
 #[napi(
-    ts_return_type = "null | string | Uint8Array | number | {} | Boolean | BigInt | Set<any> | any[] | Buffer"
+    ts_return_type = "null | string | Uint8Array | number | {} | Boolean | BigInt | Set<any> | any[] | Buffer | RequestError"
 )]
 pub fn value_from_split_pointer(
     js_env: Env,
@@ -425,8 +454,8 @@ pub fn create_leaked_double(float: f64) -> [u32; 2] {
     split_pointer(pointer)
 }
 
-#[napi]
 /// A wrapper for a script object. As long as this object is alive, the script's code is saved in memory, and can be resent to the server.
+#[napi]
 struct Script {
     hash: String,
 }

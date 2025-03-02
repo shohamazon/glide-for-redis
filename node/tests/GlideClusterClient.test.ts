@@ -10,8 +10,8 @@ import {
     expect,
     it,
 } from "@jest/globals";
-import { gte } from "semver";
-import { v4 as uuidv4 } from "uuid";
+import {gte} from "semver";
+import {v4 as uuidv4} from "uuid";
 import {
     BitwiseOperation,
     ClusterTransaction,
@@ -37,8 +37,8 @@ import {
     convertGlideRecordToRecord,
     convertRecordToGlideRecord,
 } from "..";
-import { ValkeyCluster } from "../../utils/TestUtils";
-import { runBaseTests } from "./SharedTests";
+import {ValkeyCluster} from "../../utils/TestUtils";
+import {runBaseTests} from "./SharedTests";
 import {
     checkClusterResponse,
     checkFunctionListResponse,
@@ -348,6 +348,34 @@ describe("GlideClusterClient", () => {
                     },
                 ]);
             }
+        },
+        TIMEOUT,
+    );
+
+    it.each([ProtocolVersion.RESP3])(
+        `shoham_%p`,
+        async (protocol) => {
+            client = await GlideClusterClient.createClient(
+                getClientConfigurationOption(cluster.getAddresses(), protocol),
+            );
+            let key  = "shoham";
+            const transaction = new ClusterTransaction()
+                .set(key, "1")
+                .llen(key);
+            const result = await client.exec(transaction);
+
+            console.log(result)
+            for (let i = 0; i < 2; i++) {
+                if(result) {
+                let x = result[i];
+                console.log(x);
+                console.log(x instanceof RequestError);
+                }
+            }
+            console.log(" result is " + result);
+            let error = new RequestError("error");
+            console.log("error " + error);
+            console.log("error instanceof RequestError " + (error instanceof RequestError));
         },
         TIMEOUT,
     );

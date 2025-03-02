@@ -1022,7 +1022,7 @@ class TestTransaction:
 
         x = await self.exec_transaction(glide_client, transaction)
         print(x)
-        assert type(x[1]) == Shoham
+        assert type(x[1]) == RequestError
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])

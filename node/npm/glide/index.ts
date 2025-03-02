@@ -4,8 +4,8 @@
  * Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
  */
 
-import { GLIBC, familySync } from "detect-libc";
-import { arch, platform } from "process";
+import {GLIBC,familySync} from "detect-libc";
+import {arch,platform} from "process";
 
 let globalObject = global as unknown;
 
