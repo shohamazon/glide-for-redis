@@ -370,12 +370,15 @@ describe("GlideClusterClient", () => {
                 let x = result[i];
                 console.log(x);
                 console.log(x instanceof RequestError);
+                console.log(typeof x);
                 }
             }
-            console.log(" result is " + result);
+            console.log("result is " + result);
             let error = new RequestError("error");
+            console.log(error)
             console.log("error " + error);
             console.log("error instanceof RequestError " + (error instanceof RequestError));
+            console.log(typeof error);
         },
         TIMEOUT,
     );

@@ -11,7 +11,7 @@ import {
     valueFromSplitPointer,
 } from "glide-rs";
 import * as net from "net";
-import { Buffer, BufferWriter, Long, Reader, Writer } from "protobufjs";
+import {Buffer,BufferWriter,Long,Reader,Writer} from "protobufjs";
 import {
     AggregationType,
     BaseScanOptions,
@@ -241,13 +241,13 @@ import {
     TimeoutError,
     ValkeyError,
 } from "./Errors";
-import { GlideClientConfiguration } from "./GlideClient";
+import {GlideClientConfiguration} from "./GlideClient";
 import {
     GlideClusterClientConfiguration,
     RouteOption,
     Routes,
 } from "./GlideClusterClient";
-import { Logger } from "./Logger";
+import {Logger} from "./Logger";
 import {
     command_request,
     connection_request,
@@ -281,6 +281,7 @@ export type GlideReturnType =
     | Set<GlideReturnType>
     | ReturnTypeRecord
     | ReturnTypeMap
+    | RequestError
     | ReturnTypeAttribute
     | GlideReturnType[];
 
@@ -935,12 +936,22 @@ export class BaseClient {
             }
 
             try {
+                // TODO: improve this
+                let result = valueFromSplitPointer(
+                    pointer.high!,
+                    pointer.low!,
+                    decoder === Decoder.String,
+                );
+                // TODO: make sure ServerError is part of Array only and not Array of Arrays / Map
+                if (Array.isArray(result)) {
+                    for(let i = 0; i < result.length; i++) {
+                        if ((result[i] as Object).hasOwnProperty("name") && (result[i ] as { name: string }).name == "RequestError") {
+                            result[i] = new RequestError((result[i] as { message: string }).message);
+                        }
+                    }
+                }
                 resolve(
-                    valueFromSplitPointer(
-                        pointer.high!,
-                        pointer.low!,
-                        decoder === Decoder.String,
-                    ),
+                    result
                 );
             } catch (err: unknown) {
                 Logger.log("error", "Decoder", `Decoding error: '${err}'`);

@@ -182,33 +182,7 @@ pub fn init(level: Option<Level>, file_name: Option<&str>) -> Level {
     logger_level.into()
 }
 
-#[napi(js_name = "RequestError")]
-pub struct RequestError {
-    message: String,
-}
 
-// #[js_function(1)]
-// fn request_error_constructor(ctx: CallContext<'_>) -> JS<JsUnknown> {
-//     // Get the error message (expecting a string as first argument)
-// }
-
-// #[js_function(1)]
-// fn add_message(ctx: CallContext) -> Result<JsString> {
-//     let new_msg: String = ctx.get::<JsString>(0)?.into_utf8()?.into_owned()?;
-//     let this: JsObject = ctx.this_unchecked();
-//     let request_error: &mut RequestError = ctx.env.unwrap(&this)?;
-
-//     request_error.message.push_str(&new_msg); // Append the new message
-//     ctx.env.create_string(&request_error.message) // Return updated message
-// }
-
-// #[js_function(1)]
-// fn get_message(ctx: CallContext) -> Result<JsString> {
-//     let this: JsObject = ctx.this_unchecked();
-//     let request_error: &RequestError = ctx.env.unwrap(&this)?;
-//     println!("Getting message: {}", request_error.message);
-//     ctx.env.create_string(&request_error.message)
-// }
 
 fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsUnknown> {
     match val {
@@ -316,10 +290,21 @@ fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsU
         Value::ServerError(error) => {
             let err_msg = format!("{:?}", error);
 
-            // Return a new RequestError object from the js type
-            let mut global = js_env.get_global()?;
-            let request_error: &RequestError = global.get_named_property("RequestError")?;
-            Ok(request_error.new(err_msg).into_unknown())
+            // Create a JavaScript Error with your custom message
+
+            let mut error_obj = js_env.create_object()?;
+
+            // Set the name property to "RequestError" to make it look like your custom error
+            let name_key = js_env.create_string("name")?;
+            let name_value = js_env.create_string("RequestError")?;
+            error_obj.set_property(name_key, name_value)?;
+
+            // Set the name property to "RequestError" to make it look like your custom error
+            let message_key = js_env.create_string("message")?;
+            let err_value = js_env.create_string(&err_msg)?;
+            error_obj.set_property(message_key, err_value)?;
+
+            Ok(error_obj.into_unknown())
         }
     }
 }
