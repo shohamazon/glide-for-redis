@@ -1328,9 +1328,7 @@ class TestTransaction:
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
-    async def test_transaction_dump_restore(
-        self, glide_client: TGlideClient
-    ):
+    async def test_transaction_dump_restore(self, glide_client: TGlideClient):
         keyslot = get_random_string(3)
         key1 = "{{{}}}:{}".format(
             keyslot, get_random_string(10)
