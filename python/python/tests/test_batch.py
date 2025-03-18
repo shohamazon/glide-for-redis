@@ -958,12 +958,15 @@ async def exec_batch(
     glide_client: TGlideClient,
     batch: BaseBatch,
     route: Optional[TSingleNodeRoute] = None,
+    raise_on_error: Optional[bool] = True,
 ) -> Optional[List[TResult]]:
     if isinstance(glide_client, GlideClient):
-        return await cast(GlideClient, glide_client).exec(cast(Batch, batch))
+        return await cast(GlideClient, glide_client).exec(
+            cast(Batch, batch), raise_on_error
+        )
     else:
         return await cast(GlideClusterClient, glide_client).exec(
-            cast(ClusterBatch, batch), route
+            cast(ClusterBatch, batch), route, raise_on_error
         )
 
 
@@ -1494,7 +1497,7 @@ class TestPipeline:
     async def test_pipeline_raise_on_error_true(self, glide_client: GlideClusterClient):
         key = get_random_string(10)
 
-        pipeline = ClusterBatch(is_atomic=False, raise_on_error=True)
+        pipeline = ClusterBatch(is_atomic=False)
 
         pipeline.set(key, "value")
 
@@ -1504,7 +1507,7 @@ class TestPipeline:
         pipeline.get(key)
 
         with pytest.raises(RequestError):
-            await exec_batch(glide_client, pipeline)
+            await exec_batch(glide_client, pipeline, raise_on_error=True)
 
     @pytest.mark.parametrize("cluster_mode", [True, False])
     @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
@@ -1512,7 +1515,7 @@ class TestPipeline:
         key1 = get_random_string(10)
         key2 = get_random_string(10)
 
-        pipeline = ClusterBatch(is_atomic=False, raise_on_error=False)
+        pipeline = ClusterBatch(is_atomic=False)
 
         pipeline.set(key1, "value1")
         pipeline.set(key2, "value2")
@@ -1527,7 +1530,7 @@ class TestPipeline:
         pipeline.get(key1)
         pipeline.get(key2)
 
-        result = await exec_batch(glide_client, pipeline)
+        result = await exec_batch(glide_client, pipeline, raise_on_error=False)
 
         assert result is not None
         assert len(result) == 6

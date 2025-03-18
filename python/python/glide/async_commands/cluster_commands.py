@@ -84,8 +84,9 @@ class ClusterCommands(CoreCommands):
 
     async def exec(
         self,
-        transaction: ClusterBatch,
+        batch: ClusterBatch,
         route: Optional[TSingleNodeRoute] = None,
+        raise_on_error: Optional[bool] = True,
     ) -> Optional[List[TResult]]:
         """
         Execute a transaction by processing the queued commands.
@@ -103,9 +104,9 @@ class ClusterCommands(CoreCommands):
                 doesn't return a value, the list entry will be `None`.
                 If the transaction failed due to a WATCH command, `exec` will return `None`.
         """
-        commands = transaction.commands[:]
+        commands = batch.commands[:]
         return await self._execute_batch(
-            commands, route, transaction.is_atomic, transaction.raise_on_error
+            commands, route, batch.is_atomic, raise_on_error
         )
 
     async def config_resetstat(

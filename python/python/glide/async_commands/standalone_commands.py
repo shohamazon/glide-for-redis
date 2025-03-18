@@ -66,7 +66,8 @@ class StandaloneCommands(CoreCommands):
 
     async def exec(
         self,
-        transaction: Batch,
+        batch: Batch,
+        raise_on_error: Optional[bool] = True,
     ) -> Optional[List[TResult]]:
         """
         Execute a transaction by processing the queued commands.
@@ -81,11 +82,11 @@ class StandaloneCommands(CoreCommands):
                 doesn't return a value, the list entry will be `None`.
                 If the transaction failed due to a WATCH command, `exec` will return `None`.
         """
-        commands = transaction.commands[:]
+        commands = batch.commands[:]
         return await self._execute_batch(
             commands,
-            is_atomic=transaction.is_atomic,
-            raise_on_error=transaction.raise_on_error,
+            is_atomic=batch.is_atomic,
+            raise_on_error=raise_on_error,
         )
 
     async def select(self, index: int) -> TOK:
