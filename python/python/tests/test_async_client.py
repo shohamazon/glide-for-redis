@@ -9455,7 +9455,7 @@ class TestCommands:
         # watched key didn't change outside of transaction before transaction execution, transaction will execute
         assert await glide_client.set("key1", "original_value") == OK
         assert await glide_client.watch(["key1"]) == OK
-        transaction = Batch()
+        transaction = Batch(is_atomic=True)
         transaction.set("key1", "transaction_value")
         transaction.get("key1")
         assert await glide_client.exec(transaction) is not None
@@ -9463,7 +9463,7 @@ class TestCommands:
         # watched key changed outside of transaction before transaction execution, transaction will not execute
         assert await glide_client.set("key1", "original_value") == OK
         assert await glide_client.watch(["key1"]) == OK
-        transaction = Batch()
+        transaction = Batch(is_atomic=True)
         transaction.set("key1", "transaction_value")
         assert await glide_client.set("key1", "standalone_value") == OK
         transaction.get("key1")
@@ -9481,7 +9481,7 @@ class TestCommands:
         # outside of transaction, transaction will still execute
         assert await glide_client.set("key1", "original_value") == OK
         assert await glide_client.watch(["key1"]) == OK
-        transaction = Batch()
+        transaction = Batch(is_atomic=True)
         transaction.set("key1", "transaction_value")
         assert await glide_client.set("key1", "standalone_value") == OK
         transaction.get("key1")
