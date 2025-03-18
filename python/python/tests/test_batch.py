@@ -922,8 +922,6 @@ async def helper1(
     transaction.rename(key, key2)
     args.append(OK)
 
-    # when i comment both of them, it passes but when i comment only 1, it fails. good luck maty
-
     transaction.exists([key2])
     args.append(1)
     transaction.touch([key2])
