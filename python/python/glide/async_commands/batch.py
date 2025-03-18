@@ -1,6 +1,7 @@
 # Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 import threading
+import warnings
 from typing import List, Mapping, Optional, Tuple, TypeVar, Union
 
 from glide.async_commands.bitmap import (
@@ -5168,3 +5169,31 @@ class ClusterBatch(BaseBatch):
         )
 
     # TODO: add all CLUSTER commands
+
+
+class Transaction(Batch):
+    """
+    DEPRECATED: Use Batch(is_atomic=True) instead.
+    """
+
+    def __init__(self, raise_on_error=True) -> None:
+        warnings.warn(
+            "Transaction is deprecated. Use Batch(is_atomic=True) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(is_atomic=True, raise_on_error=raise_on_error)
+
+
+class ClusterTransaction(ClusterBatch):
+    """
+    DEPRECATED: Use Batch(is_atomic=True) instead.
+    """
+
+    def __init__(self, raise_on_error=True) -> None:
+        warnings.warn(
+            "Transaction is deprecated. Use ClusterBatch(is_atomic=True) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(is_atomic=True, raise_on_error=raise_on_error)
