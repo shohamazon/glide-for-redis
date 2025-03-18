@@ -1023,11 +1023,6 @@ class TestTransaction:
             else ClusterBatch(is_atomic=True)
         )
         await glide_client.set(key, "1")
-        transaction = (
-            Batch(is_atomic=True)
-            if isinstance(glide_client, GlideClient)
-            else ClusterBatch(is_atomic=True)
-        )
 
         transaction.custom_command(["INCR", key])
         transaction.custom_command(["DISCARD"])
