@@ -61,11 +61,23 @@ from tests.utils.utils import (
 )
 
 
-def generate_key(keyslot: Optional[str]) -> str:
+def generate_key(keyslot: Optional[str], is_atomic: bool) -> str:
     """Generate a key with the same slot if keyslot is provided; otherwise, generate a random key."""
-    if keyslot:
+    if is_atomic and keyslot:
         return f"{{{keyslot}}}: {get_random_string(10)}"
     return get_random_string(20)
+
+
+def generate_key_same_slot(keyslot: str) -> str:
+    """Generate a key with the same slot as the provided keyslot."""
+    if keyslot.startswith("{") and "}" in keyslot:
+        # Extract the tag between the first '{' and the first '}'.
+        # This handles cases where keyslot already contains hash tags, in order to avoid nested hash tags.
+        tag = keyslot[1 : keyslot.index("}")]
+    else:
+        tag = keyslot
+
+    return f"{{{tag}}}: {get_random_string(10)}"
 
 
 async def batch_test(
@@ -73,33 +85,38 @@ async def batch_test(
     glide_client: TGlideClient,
     keyslot: Optional[str] = None,
 ) -> List[TResult]:
-    common_slot = keyslot or get_random_string(5)
-    key = generate_key(common_slot)
-    key2 = generate_key(common_slot)
-    key3 = generate_key(common_slot)
-    key4 = generate_key(common_slot)
-    key5 = generate_key(common_slot)
-    key6 = generate_key(common_slot)
-    key7 = generate_key(keyslot)
-    key8 = generate_key(common_slot)
-    key9 = generate_key(keyslot)  # list
-    key10 = generate_key(keyslot)  # hyper log log
-    key11 = generate_key(keyslot)  # streams
-    key12 = generate_key(keyslot)  # geo
-    key13 = generate_key(common_slot)  # sorted set
-    key14 = generate_key(common_slot)  # sorted set
-    key15 = generate_key(common_slot)  # sorted set
-    key16 = generate_key(keyslot)  # sorted set
-    key17 = generate_key(common_slot)  # sort
-    key18 = generate_key(common_slot)  # sort
-    key19 = generate_key(common_slot)  # bitmap
-    key20 = generate_key(common_slot)  # bitmap
-    key22 = generate_key(keyslot)  # getex
-    key23 = generate_key(common_slot)  # string
-    key24 = generate_key(common_slot)  # string
-    key25 = generate_key(keyslot)  # list
-    key26 = generate_key(common_slot)  # sort
-    key27 = generate_key(common_slot)  # sort
+    """
+    Test all batch commands.
+    For transactions, all keys are generated in the same slot to ensure atomic execution.
+    For pipelines, only keys used together in commands that require same-slot access
+    (e.g.MGET, ZADD) will share a slot - other keys can be in different slots.
+    """
+    key = generate_key(keyslot, batch.is_atomic)
+    key2 = generate_key_same_slot(key)
+    key3 = generate_key_same_slot(key)
+    key4 = generate_key_same_slot(key)
+    key5 = generate_key(keyslot, batch.is_atomic)
+    key6 = generate_key_same_slot(key5)
+    key7 = generate_key(keyslot, batch.is_atomic)
+    key8 = generate_key(keyslot, batch.is_atomic)
+    key9 = generate_key(keyslot, batch.is_atomic)  # list
+    key10 = generate_key(keyslot, batch.is_atomic)  # hyper log log
+    key11 = generate_key(keyslot, batch.is_atomic)  # streams
+    key12 = generate_key(keyslot, batch.is_atomic)  # geo
+    key13 = generate_key_same_slot(key8)  # sorted set
+    key14 = generate_key_same_slot(key8)  # sorted set
+    key15 = generate_key_same_slot(key8)  # sorted set
+    key16 = generate_key(keyslot, batch.is_atomic)  # sorted set
+    key17 = generate_key(keyslot, batch.is_atomic)  # sort
+    key18 = generate_key_same_slot(key17)  # sort
+    key19 = generate_key(keyslot, batch.is_atomic)  # bitmap
+    key20 = generate_key_same_slot(key19)  # bitmap
+    key22 = generate_key(keyslot, batch.is_atomic)  # getex
+    key23 = generate_key(keyslot, batch.is_atomic)  # string
+    key24 = generate_key_same_slot(key23)  # string
+    key25 = generate_key(keyslot, batch.is_atomic)  # list
+    key26 = generate_key(keyslot, batch.is_atomic)  # sort
+    key27 = generate_key_same_slot(key26)  # sort
     value = datetime.now(timezone.utc).strftime("%m/%d/%Y, %H:%M:%S")
     value_bytes = value.encode()
     value2 = get_random_string(5)
@@ -232,7 +249,7 @@ async def batch_test(
 
     await helper6(
         batch,
-        common_slot,
+        keyslot,
         glide_client,
         key,
         key7,
@@ -265,6 +282,7 @@ async def helper6(
     args,
 ):
     if not await check_if_server_version_lt(glide_client, "8.0.0"):
+        keyslot = keyslot or key26
         transaction.hset(f"{{{keyslot}}}: 1", {"name": "Alice", "age": "30"})
         args.append(2)
         transaction.hset(f"{{{keyslot}}}: 2", {"name": "Bob", "age": "25"})
