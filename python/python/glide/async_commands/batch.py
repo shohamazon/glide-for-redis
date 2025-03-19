@@ -56,6 +56,7 @@ from glide.async_commands.stream import (
 )
 from glide.constants import TEncodable
 from glide.protobuf.command_request_pb2 import RequestType
+from deprecated import deprecated
 
 TBatch = TypeVar("TBatch", bound="BaseBatch")
 
@@ -5171,29 +5172,13 @@ class ClusterBatch(BaseBatch):
     # TODO: add all CLUSTER commands
 
 
+@deprecated(reason="Use ClusterBatch(is_atomic=True) instead.")
 class Transaction(Batch):
-    """
-    DEPRECATED: Use Batch(is_atomic=True) instead.
-    """
-
     def __init__(self, raise_on_error=True) -> None:
-        warnings.warn(
-            "Transaction is deprecated. Use Batch(is_atomic=True) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         super().__init__(is_atomic=True, raise_on_error=raise_on_error)
 
 
+@deprecated(reason="Use ClusterBatch(is_atomic=True) instead.")
 class ClusterTransaction(ClusterBatch):
-    """
-    DEPRECATED: Use Batch(is_atomic=True) instead.
-    """
-
     def __init__(self, raise_on_error=True) -> None:
-        warnings.warn(
-            "Transaction is deprecated. Use ClusterBatch(is_atomic=True) instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         super().__init__(is_atomic=True, raise_on_error=raise_on_error)

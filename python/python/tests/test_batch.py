@@ -73,7 +73,8 @@ def generate_key_same_slot(keyslot: str) -> str:
     if keyslot.startswith("{") and "}" in keyslot:
         # Extract the tag between the first '{' and the first '}'.
         # This handles cases where keyslot already contains hash tags, in order to avoid nested hash tags.
-        tag = keyslot[1 : keyslot.index("}")]
+        end_index = keyslot.index("}")
+        tag = keyslot[1:end_index]
     else:
         tag = keyslot
 
@@ -974,7 +975,7 @@ async def exec_batch(
     glide_client: TGlideClient,
     batch: BaseBatch,
     route: Optional[TSingleNodeRoute] = None,
-    raise_on_error: Optional[bool] = True,
+    raise_on_error: bool = True,
 ) -> Optional[List[TResult]]:
     if isinstance(glide_client, GlideClient):
         return await cast(GlideClient, glide_client).exec(

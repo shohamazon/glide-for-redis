@@ -67,7 +67,7 @@ class StandaloneCommands(CoreCommands):
     async def exec(
         self,
         batch: Batch,
-        raise_on_error: Optional[bool] = True,
+        raise_on_error: bool = True,
     ) -> Optional[List[TResult]]:
         """
         Execute a transaction by processing the queued commands.
