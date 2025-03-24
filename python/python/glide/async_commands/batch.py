@@ -1,9 +1,9 @@
 # Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 import threading
-import warnings
 from typing import List, Mapping, Optional, Tuple, TypeVar, Union
 
+from deprecated import deprecated
 from glide.async_commands.bitmap import (
     BitFieldGet,
     BitFieldSubCommands,
@@ -56,31 +56,43 @@ from glide.async_commands.stream import (
 )
 from glide.constants import TEncodable
 from glide.protobuf.command_request_pb2 import RequestType
-from deprecated import deprecated
 
 TBatch = TypeVar("TBatch", bound="BaseBatch")
 
 
 class BaseBatch:
     """
-    Base class encompassing shared commands for both standalone and cluster mode implementations in transaction.
+    Base class encompassing shared commands for both standalone and cluster mode implementations in batch.
 
     Command Response:
         The response for each command depends on the executed command. Specific response types
         are documented alongside each method.
 
-    Example:
-        transaction = BaseBatch(is_atomic=True, raise_on_error=True)
+    Transaction vs Pipeline:
+        - Transactions (is_atomic=True) ensure that all commands are executed atomically.
+          In a transaction, all keys must belong to the same slot. This means if any key is in a different slot,
+          the transaction will not work.
+        - Pipelines (is_atomic=False) send multiple commands to the server without waiting for each command's
+          response. However, pipeline commands are not atomic and can be sent to different slots in a cluster,
+          meaning they are executed independently.
+
+    Transaction Example:
+        transaction = BaseBatch(is_atomic=True)
         >>> transaction.set("key", "value").get("key")
         >>> await client.exec(transaction)
         [OK , "value"]
+
+    Pipeline Example:
+        pipeline = BaseBatch(is_atomic=False)
+        >>> pipeline.set("key", "value").get("key")
+        >>> await client.exec(pipeline)
+        [OK , "value"]
     """
 
-    def __init__(self, is_atomic=False, raise_on_error=True) -> None:
+    def __init__(self, is_atomic=False) -> None:
         self.commands: List[Tuple[RequestType.ValueType, List[TEncodable]]] = []
         self.lock = threading.Lock()
         self.is_atomic = is_atomic
-        self.raise_on_error = raise_on_error
 
     def append_command(
         self: TBatch,
@@ -221,7 +233,7 @@ class BaseBatch:
 
         Command response:
             OK: If the `key` was successfully renamed, return "OK". If `key` does not exist,
-                the transaction fails with an error.
+                the batch fails with an error.
         """
         return self.append_command(RequestType.Rename, [key, new_key])
 
@@ -248,7 +260,7 @@ class BaseBatch:
 
             @example - Append a command to list of all pub/sub clients:
 
-                transaction.customCommand(["CLIENT", "LIST","TYPE", "PUBSUB"])
+                batch.customCommand(["CLIENT", "LIST","TYPE", "PUBSUB"])
 
         Args:
             command_args (List[TEncodable]): List of command arguments.
@@ -337,7 +349,7 @@ class BaseBatch:
             parameters and their respective values to set.
 
         Command response:
-            OK: Returns OK if all configurations have been successfully set. Otherwise, the transaction fails with an error.
+            OK: Returns OK if all configurations have been successfully set. Otherwise, the batch fails with an error.
         """
         parameters: List[TEncodable] = []
         for pair in parameters_map.items():
@@ -364,6 +376,10 @@ class BaseBatch:
 
         Command response:
             OK: a simple OK response.
+
+        Note:
+            If the batch is a transaction (is_atomic = True), then all keys must map to the same slot.
+            In a pipeline, the keys do not have to map to the same slot.
         """
         parameters: List[TEncodable] = []
         for pair in key_value_map.items():
@@ -400,6 +416,10 @@ class BaseBatch:
         Command response:
             List[Optional[bytes]]: A list of values corresponding to the provided keys. If a key is not found,
             its corresponding value in the list will be None.
+
+        Note:
+            If the batch is a transaction (is_atomic = True), then all keys must map to the same slot.
+            In a pipeline, the keys do not have to map to the same slot.
         """
         return self.append_command(RequestType.MGet, keys)
 
@@ -423,7 +443,7 @@ class BaseBatch:
         See https://valkey.io/commands/config-rewrite/ for details.
 
         Command response:
-            OK: OK is returned when the configuration was rewritten properly. Otherwise, the transaction fails with an error.
+            OK: OK is returned when the configuration was rewritten properly. Otherwise, the batch fails with an error.
         """
         return self.append_command(RequestType.ConfigRewrite, [])
 
@@ -685,13 +705,13 @@ class BaseBatch:
 
         Command response:
             int: The number of fields in the hash, or 0 when the key does not exist.
-            If `key` holds a value that is not a hash, the transaction fails with an error.
+            If `key` holds a value that is not a hash, the batch fails with an error.
         """
         return self.append_command(RequestType.HLen, [key])
 
     def client_getname(self: TBatch) -> TBatch:
         """
-        Get the name of the connection on which the transaction is being executed.
+        Get the name of the connection on which the batch is being executed.
         See https://valkey.io/commands/client-getname/ for more details.
 
         Command response:
@@ -1076,7 +1096,7 @@ class BaseBatch:
 
         Command response:
             int: The length of the list after the push operations.
-                If `key` holds a value that is not a list, the transaction fails.
+                If `key` holds a value that is not a list, the batch fails.
         """
         return self.append_command(RequestType.RPush, [key] + elements)
 
@@ -4981,13 +5001,35 @@ class Batch(BaseBatch):
         The response for each command depends on the executed command. Specific response types
         are documented alongside each method.
 
-    Example:
-        transaction = Transaction()
+
+    Transaction vs Pipeline:
+        - Transactions (is_atomic=True) ensure that all commands are executed atomically.
+          In a transaction, all keys must belong to the same slot. This means if any key is in a different slot,
+          the transaction will not work.
+        - Pipelines (is_atomic=False) send multiple commands to the server without waiting for each command's
+          response. However, pipeline commands are not atomic and can be sent to different slots in a cluster,
+          meaning they are executed independently.
+
+    Note for Standalone Mode (Cluster Mode Disabled):
+        In standalone mode, pipeline commands are supported only on the primary connection.
+        They are not distributed to replica connections.
+
+    Transaction Example:
+        transaction = Batch(is_atomic=True)
         >>> transaction.set("key", "value")
         >>> transaction.select(1)  # Standalone command
         >>> transaction.get("key")
         >>> await client.exec(transaction)
         [OK , OK , None]
+
+    Pipeline Example:
+        pipeline = Batch(is_atomic=True)
+        >>> pipeline.set("key", "value")
+        >>> pipeline.select(1)  # Standalone command
+        >>> pipeline.get("key")
+        >>> await client.exec(pipeline)
+        [OK , OK , None]
+
 
     """
 
@@ -5078,6 +5120,18 @@ class ClusterBatch(BaseBatch):
     Command Response:
         The response for each command depends on the executed command. Specific response types
         are documented alongside each method.
+
+    Transaction vs Pipeline:
+        - Transactions (is_atomic=True) ensure that all commands are executed atomically.
+          In a transaction, all keys must belong to the same slot. This means if any key is in a different slot,
+          the transaction will not work.
+        - Pipelines (is_atomic=False) send multiple commands to the server without waiting for each command's
+          response. However, pipeline commands are not atomic and can be sent to different slots in a cluster,
+          meaning they are executed independently.
+
+    Note for Cluster Mode:
+        When cluster mode is enabled and the client is configured to read from replicas, read commands
+        in a pipeline will be distributed in a round-robin manner across the replicas.
     """
 
     def copy(
