@@ -25,7 +25,9 @@ mod cluster_async {
     use redis::{
         aio::{ConnectionLike, MultiplexedConnection},
         cluster::ClusterClient,
-        cluster_async::{testing::MANAGEMENT_CONN_NAME, ClusterConnection, Connect},
+        cluster_async::{
+            testing::MANAGEMENT_CONN_NAME, ClusterConnection, Connect, PipelineRetryStrategy,
+        },
         cluster_routing::{
             MultipleNodeRoutingInfo, Route, RoutingInfo, SingleNodeRoutingInfo, SlotAddr,
         },
@@ -989,10 +991,10 @@ mod cluster_async {
             pipeline: &'a redis::Pipeline,
             offset: usize,
             count: usize,
-            retry_failed_commands: bool,
+            pipeline_retry_strategy: Option<PipelineRetryStrategy>,
         ) -> RedisFuture<'a, Vec<Value>> {
             self.inner
-                .req_packed_commands(pipeline, offset, count, retry_failed_commands)
+                .req_packed_commands(pipeline, offset, count, pipeline_retry_strategy)
         }
 
         fn get_db(&self) -> i64 {
@@ -4004,8 +4006,8 @@ mod cluster_async {
                         &pipe,
                         0,
                         2,
-                        SingleNodeRoutingInfo::SpecificNode(Route::new(keyslot_bar, SlotAddr::Master)),
-                        true,
+                        Some(SingleNodeRoutingInfo::SpecificNode(Route::new(keyslot_bar, SlotAddr::Master))),
+                        None,
                     )
                     .await;
             });
