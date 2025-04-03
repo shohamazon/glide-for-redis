@@ -1,5 +1,6 @@
 # Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
+
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional, Union, cast
@@ -975,6 +976,7 @@ async def exec_batch(
     glide_client: TGlideClient,
     batch: BaseBatch,
     route: Optional[TSingleNodeRoute] = None,
+    timeout: Optional[int] = None,
     raise_on_error: bool = True,
 ) -> Optional[List[TResult]]:
     if isinstance(glide_client, GlideClient):
@@ -983,7 +985,10 @@ async def exec_batch(
         )
     else:
         return await cast(GlideClusterClient, glide_client).exec(
-            cast(ClusterBatch, batch), route, raise_on_error
+            cast(ClusterBatch, batch),
+            route,
+            timeout,
+            raise_on_error,
         )
 
 
@@ -1433,7 +1438,7 @@ class TestPipeline:
         pipeline.info()
 
         expected = await batch_test(pipeline, glide_client)
-        result = await exec_batch(glide_client, pipeline)
+        result = await exec_batch(glide_client, pipeline, timeout=1000)
         assert isinstance(result, list)
         if cluster_mode:
             assert isinstance(result[0], dict)
@@ -1557,3 +1562,30 @@ class TestPipeline:
 
         assert isinstance(result[3], Exception)
         assert "wrong number of arguments" in str(result[3])
+
+    @pytest.mark.parametrize("cluster_mode", [True, False])
+    @pytest.mark.parametrize("protocol", [ProtocolVersion.RESP2, ProtocolVersion.RESP3])
+    async def test_pipeline_timeout(self, glide_client: TGlideClient):
+        key = get_random_string(10)
+        pipeline = (
+            ClusterBatch(is_atomic=False)
+            if isinstance(glide_client, GlideClusterClient)
+            else Batch(is_atomic=False)
+        )
+        # This BLPOP will sleep for 5 seconds, but our timeout (100ms) forces a timeout.
+        pipeline.blpop([key], 5)
+        pipeline.get(key)
+
+        with pytest.raises(RequestError, match="timed out"):
+            await exec_batch(glide_client, pipeline, timeout=100)
+
+        pipeline = (
+            ClusterBatch(is_atomic=False)
+            if isinstance(glide_client, GlideClusterClient)
+            else Batch(is_atomic=False)
+        )
+        # Use BLPOP with a 3-second block time and a long timeout, so the BLPOP has time to succesfuly return None.
+        pipeline.blpop([key], 3)
+
+        result = await exec_batch(glide_client, pipeline, timeout=10000)
+        assert result == [None]

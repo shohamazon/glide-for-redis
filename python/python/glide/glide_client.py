@@ -276,8 +276,11 @@ class BaseClient(CoreCommands):
         self,
         commands: List[Tuple[RequestType.ValueType, List[TEncodable]]],
         route: Optional[Route] = None,
+        timeout: Optional[int] = None,
         is_atomic: bool = True,
         raise_on_error: bool = True,
+        retry_server_error: bool = False,
+        retry_connection_error: bool = False,
     ) -> List[TResult]:
         if self._is_closed:
             raise ClosingError(
@@ -300,9 +303,10 @@ class BaseClient(CoreCommands):
         request.batch.commands.extend(batch_commands)
         request.batch.is_atomic = is_atomic
         request.batch.raise_on_error = raise_on_error
-        # request.timeout = None
-        request.batch.retry_server_error = False
-        request.batch.retry_connection_error = False
+        if timeout is not None:
+            request.batch.timeout = timeout
+        request.batch.retry_server_error = retry_server_error
+        request.batch.retry_connection_error = retry_connection_error
         set_protobuf_route(request, route)
         return await self._write_request_await_response(request)
 

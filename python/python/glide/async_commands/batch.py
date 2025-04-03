@@ -5228,11 +5228,11 @@ class ClusterBatch(BaseBatch):
 
 @deprecated(reason="Use ClusterBatch(is_atomic=True) instead.")
 class Transaction(Batch):
-    def __init__(self, raise_on_error=True) -> None:
-        super().__init__(is_atomic=True, raise_on_error=raise_on_error)
+    def __init__(self) -> None:
+        super().__init__(is_atomic=True)
 
 
 @deprecated(reason="Use ClusterBatch(is_atomic=True) instead.")
 class ClusterTransaction(ClusterBatch):
-    def __init__(self, raise_on_error=True) -> None:
-        super().__init__(is_atomic=True, raise_on_error=raise_on_error)
+    def __init__(self) -> None:
+        super().__init__(is_atomic=True)

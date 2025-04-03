@@ -86,7 +86,10 @@ class ClusterCommands(CoreCommands):
         self,
         batch: ClusterBatch,
         route: Optional[TSingleNodeRoute] = None,
-        raise_on_error: Optional[bool] = True,
+        timeout: Optional[int] = None,
+        raise_on_error: bool = True,
+        retry_server_error: bool = False,
+        retry_connection_error: bool = False,
     ) -> Optional[List[TResult]]:
         """
         Execute a transaction by processing the queued commands.
@@ -106,7 +109,13 @@ class ClusterCommands(CoreCommands):
         """
         commands = batch.commands[:]
         return await self._execute_batch(
-            commands, route, batch.is_atomic, raise_on_error
+            commands,
+            route,
+            timeout,
+            batch.is_atomic,
+            raise_on_error,
+            retry_server_error,
+            retry_connection_error,
         )
 
     async def config_resetstat(
