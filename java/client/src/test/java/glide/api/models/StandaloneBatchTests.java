@@ -31,7 +31,7 @@ import java.util.List;
 import org.apache.commons.lang3.tuple.Pair;
 import org.junit.jupiter.api.Test;
 
-public class StandaloneTransactionTests {
+public class StandaloneBatchTests {
     @Test
     public void standalone_transaction_commands() {
         List<Pair<CommandRequestOuterClass.RequestType, CommandRequestOuterClass.Command.ArgsArray>>

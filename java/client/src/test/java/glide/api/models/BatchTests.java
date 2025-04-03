@@ -309,7 +309,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
-public class TransactionTests {
+public class BatchTests {
     private static Stream<Arguments> getTransactionBuilders() {
         return Stream.of(Arguments.of(new Batch(true)), Arguments.of(new ClusterBatch(true)));
     }

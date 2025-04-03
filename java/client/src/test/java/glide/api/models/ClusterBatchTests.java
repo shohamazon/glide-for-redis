@@ -23,7 +23,7 @@ import java.util.List;
 import org.apache.commons.lang3.tuple.Pair;
 import org.junit.jupiter.api.Test;
 
-public class ClusterTransactionTests {
+public class ClusterBatchTests {
 
     @Test
     public void cluster_transaction_builds_protobuf_request() {
