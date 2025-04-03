@@ -92,14 +92,24 @@ class ClusterCommands(CoreCommands):
         retry_connection_error: bool = False,
     ) -> Optional[List[TResult]]:
         """
-        Execute a transaction by processing the queued commands.
+        Execute a batch by processing the queued commands.
         See https://valkey.io/docs/topics/transactions/ for details on Transactions.
 
         Args:
-            transaction (ClusterTransaction): A `ClusterTransaction` object containing a list of commands to be executed.
+            batch (ClusterBatch): A `ClusterBatch` object containing a list of commands to be executed.
             route (Optional[TSingleNodeRoute]): If `route` is not provided, the transaction will be routed to the slot owner
                 of the first key found in the transaction. If no key is found, the command will be sent to a random node.
                 If `route` is provided, the client will route the command to the nodes defined by `route`.
+            timeout (Optional[int]): Specifies a timeout in milliseconds for the execution of the batch.
+                If the execution exceeds the timeout, it will be cancelled, and will raise an error. It is recommended to set a relatively high timeout,
+                especially for complex or lengthy transactions, to avoid premature cancellations.
+            retry_server_error (Optional[bool]): If set to `True`, the client will retry the batch execution in case of server errors.
+                This is useful for handling transient server issues. Note that when retrying due to server errors, the order of commands
+                within the batch may be reordered.
+            retry_connection_error (Optional[bool]): If set to `True`, the client will retry the batch execution in case of connection errors.
+                This is useful for handling network issues. Be aware that when retrying due to connection errors, commands within the batch
+                may be executed multiple times.
+
 
         Returns:
             Optional[List[TResult]]: A list of results corresponding to the execution of each command
