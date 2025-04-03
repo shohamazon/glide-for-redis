@@ -31,12 +31,12 @@ import java.util.List;
 import org.apache.commons.lang3.tuple.Pair;
 import org.junit.jupiter.api.Test;
 
-public class StandaloneTransactionTests {
+public class StandaloneBatchTests {
     @Test
     public void standalone_transaction_commands() {
         List<Pair<CommandRequestOuterClass.RequestType, CommandRequestOuterClass.Command.ArgsArray>>
                 results = new LinkedList<>();
-        Transaction transaction = new Transaction();
+        Batch transaction = new Batch(true);
 
         transaction.select(5L);
         results.add(Pair.of(Select, buildArgs("5")));
@@ -195,7 +195,7 @@ public class StandaloneTransactionTests {
                                 TYPE_OPTION_STRING,
                                 ZSET.toString())));
 
-        var protobufTransaction = transaction.getProtobufTransaction().build();
+        var protobufTransaction = transaction.getProtobufBatch().build();
 
         for (int idx = 0; idx < protobufTransaction.getCommandsCount(); idx++) {
             CommandRequestOuterClass.Command protobuf = protobufTransaction.getCommands(idx);
