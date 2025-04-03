@@ -27,7 +27,7 @@ public class ClusterTransactionTests {
 
     @Test
     public void cluster_transaction_builds_protobuf_request() {
-        ClusterTransaction transaction = new ClusterTransaction();
+        ClusterBatch transaction = new ClusterBatch(true);
         List<Pair<RequestType, ArgsArray>> results = new LinkedList<>();
 
         transaction.publish("msg", "ch1", true);
@@ -89,7 +89,7 @@ public class ClusterTransactionTests {
                                 STORE_COMMAND_STRING,
                                 "key2")));
 
-        var protobufTransaction = transaction.getProtobufTransaction().build();
+        var protobufTransaction = transaction.getProtobufBatch().build();
 
         for (int idx = 0; idx < protobufTransaction.getCommandsCount(); idx++) {
             Command protobuf = protobufTransaction.getCommands(idx);

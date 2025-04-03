@@ -36,7 +36,7 @@ public class StandaloneTransactionTests {
     public void standalone_transaction_commands() {
         List<Pair<CommandRequestOuterClass.RequestType, CommandRequestOuterClass.Command.ArgsArray>>
                 results = new LinkedList<>();
-        Transaction transaction = new Transaction();
+        Batch transaction = new Batch(true);
 
         transaction.select(5L);
         results.add(Pair.of(Select, buildArgs("5")));
@@ -195,7 +195,7 @@ public class StandaloneTransactionTests {
                                 TYPE_OPTION_STRING,
                                 ZSET.toString())));
 
-        var protobufTransaction = transaction.getProtobufTransaction().build();
+        var protobufTransaction = transaction.getProtobufBatch().build();
 
         for (int idx = 0; idx < protobufTransaction.getCommandsCount(); idx++) {
             CommandRequestOuterClass.Command protobuf = protobufTransaction.getCommands(idx);
