@@ -1,6 +1,7 @@
 // Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
 
 use glide_core::Telemetry;
+use napi::bindgen_prelude::JsValuesTupleIntoVec;
 use redis::GlideConnectionOptions;
 
 #[cfg(not(target_env = "msvc"))]
@@ -277,16 +278,17 @@ fn resp_value_to_js(val: Value, js_env: Env, string_decoder: bool) -> Result<JsU
             obj.set_named_property("values", js_array_view)?;
             Ok(obj.into_unknown())
         }
-        Value::ServerError(_) => Err(Error::new(
-            // TODO: add ServerError support
-            Status::GenericFailure,
-            "ServerError is not supported",
-        )),
+        Value::ServerError(_) => {
+            let message = "ServerError".to_string();
+            let err = Error::new(Status::GenericFailure, "ServerError".to_string());
+            let js_err = napi::JsError::from(err);
+            Ok(js_err.into_unknown(js_env))
+        }
     }
 }
 
 #[napi(
-    ts_return_type = "null | string | Uint8Array | number | {} | Boolean | BigInt | Set<any> | any[] | Buffer"
+    ts_return_type = "null | Error | string | Uint8Array | number | {} | Boolean | BigInt | Set<any> | any[] | Buffer "
 )]
 pub fn value_from_split_pointer(
     js_env: Env,

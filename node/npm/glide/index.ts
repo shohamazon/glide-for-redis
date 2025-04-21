@@ -4,10 +4,15 @@
  * Copyright Valkey GLIDE Project Contributors - SPDX Identifier: Apache-2.0
  */
 
-import { GLIBC, familySync } from "detect-libc";
-import { arch, platform } from "process";
+import {GLIBC,familySync} from "detect-libc";
+import {arch,platform} from "process";
+import {RequestError} from "../../src/Errors"; // or wherever it's defined
 
+(globalThis as any)._RequestErrorCtor = RequestError;
 let globalObject = global as unknown;
+
+console.log("globalThis === global:", globalThis === global);
+
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 function loadNativeBinding() {
@@ -195,6 +200,8 @@ function initialize() {
         ElementAndScore,
     } = nativeBinding;
 
+    (globalThis as any)._RequestErrorCtor = RequestError;
+
     module.exports = {
         AggregationType,
         BaseScanOptions,
@@ -347,8 +354,15 @@ function initialize() {
     };
 
     globalObject = Object.assign(global, nativeBinding);
+    //(globalThis as any)._RequestErrorCtor = RequestError;
 }
 
+//(globalThis as any)._RequestErrorCtor = RequestError;
+
+
 initialize();
+console.log("native binding sees _RequestErrorCtor:", (globalThis as any)._RequestErrorCtor);
+
+//(globalThis as any)._RequestErrorCtor = RequestError;
 
 export default globalObject;

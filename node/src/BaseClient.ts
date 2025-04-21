@@ -11,7 +11,7 @@ import {
     valueFromSplitPointer,
 } from "glide-rs";
 import * as net from "net";
-import { Buffer, BufferWriter, Long, Reader, Writer } from "protobufjs";
+import {Buffer,BufferWriter,Long,Reader,Writer} from "protobufjs";
 import {
     AggregationType,
     BaseScanOptions,
@@ -240,13 +240,13 @@ import {
     TimeoutError,
     ValkeyError,
 } from "./Errors";
-import { GlideClientConfiguration } from "./GlideClient";
+import {GlideClientConfiguration} from "./GlideClient";
 import {
     GlideClusterClientConfiguration,
     RouteOption,
     Routes,
 } from "./GlideClusterClient";
-import { Logger } from "./Logger";
+import {Logger} from "./Logger";
 import {
     command_request,
     connection_request,
@@ -281,6 +281,7 @@ export type GlideReturnType =
     | ReturnTypeRecord
     | ReturnTypeMap
     | ReturnTypeAttribute
+    | Error
     | GlideReturnType[];
 
 /**
@@ -950,13 +951,23 @@ export class BaseClient {
             }
 
             try {
-                resolve(
-                    valueFromSplitPointer(
-                        pointer.high!,
-                        pointer.low!,
-                        decoder === Decoder.String,
-                    ),
+                console.log("before test:", (globalThis as any)._RequestErrorCtor);
+                const resolvedValue = valueFromSplitPointer(
+                    pointer.high!,
+                    pointer.low!,
+                    decoder === Decoder.String,
                 );
+                if (Array.isArray(resolvedValue)) {
+                    resolvedValue.forEach(item => {
+                        console.log(item);
+                        console.log(item instanceof Error);
+                        console.log(typeof item);
+                        if (item instanceof Error) {
+                            console.log(item);
+                        }
+                    });
+                }
+                resolve(resolvedValue);
             } catch (err: unknown) {
                 Logger.log("error", "Decoder", `Decoding error: '${err}'`);
                 reject(
@@ -1132,12 +1143,17 @@ export class BaseClient {
         command: command_request.Command | command_request.Command[],
         route?: command_request.Routes,
     ) {
+        (globalThis as any)._RequestErrorCtor = RequestError;
+        console.log("native binding sees _RequestErrorCtor:", (globalThis as any)._RequestErrorCtor);
+        console.log("globalThis === global:", globalThis === global);
+
         const message = Array.isArray(command)
             ? command_request.CommandRequest.create({
                   callbackIdx,
                   batch: command_request.Batch.create({
                       isAtomic: true,
                       commands: command,
+                      raiseOnError: false,
                       // TODO: add support for timeout, raiseOnError and retryStrategy
                   }),
                   route,

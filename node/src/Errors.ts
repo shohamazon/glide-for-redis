@@ -22,6 +22,8 @@ export class ClosingError extends ValkeyError {}
 /// Errors that were reported during a request.
 export class RequestError extends ValkeyError {}
 
+
+
 /// Errors that are thrown when a request times out.
 export class TimeoutError extends RequestError {}
 
