@@ -2,12 +2,64 @@
 use super::glide_cache::{calculate_entry_size, CacheConfig, CachedKeyType, GlideCache};
 
 use crate::{
-    cache::glide_cache::{CacheCore, CacheEntry},
+    cache::glide_cache::{CacheCore, CacheEntry, EvictionStrategy, GlideCacheImpl},
     Value,
 };
 use logger_core::{log_debug, log_warn};
 use lru::LruCache;
 use std::sync::{Arc, Mutex};
+
+/// LRU eviction strategy — thin wrapper around `lru::LruCache`.
+///
+/// All shared logic (TTL, memory, metrics) is handled by `GlideCacheImpl`.
+/// This only implements the 6 data structure operations.
+#[derive(Debug)]
+pub(crate) struct LruStrategy {
+    cache: LruCache<Vec<u8>, CacheEntry>,
+}
+
+impl LruStrategy {
+    pub fn new() -> Self {
+        Self {
+            cache: LruCache::unbounded(),
+        }
+    }
+}
+
+impl EvictionStrategy for LruStrategy {
+    fn policy_name(&self) -> &'static str {
+        "LRU"
+    }
+
+    fn get_and_promote(&mut self, key: &[u8]) -> Option<&CacheEntry> {
+        self.cache.get(key)
+    }
+
+    fn peek(&self, key: &[u8]) -> Option<&CacheEntry> {
+        self.cache.peek(key)
+    }
+
+    fn insert(&mut self, key: Vec<u8>, entry: CacheEntry) {
+        self.cache.push(key, entry);
+    }
+
+    fn remove(&mut self, key: &[u8]) -> Option<CacheEntry> {
+        self.cache.pop(key)
+    }
+
+    fn evict_one(&mut self) -> Option<CacheEntry> {
+        self.cache.pop_lru().map(|(_, entry)| entry)
+    }
+
+    fn len(&self) -> usize {
+        self.cache.len()
+    }
+}
+
+/// Creates a new LRU cache with the given configuration.
+pub fn new_lru_cache(config: CacheConfig) -> Arc<GlideCacheImpl<LruStrategy>> {
+    GlideCacheImpl::new(LruStrategy::new(), config)
+}
 
 /// LRU (Least Recently Used) Cache Implementation with Lazy TTL Expiration
 #[derive(Debug)]
