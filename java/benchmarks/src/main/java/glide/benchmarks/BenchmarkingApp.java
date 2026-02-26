@@ -47,6 +47,20 @@ public class BenchmarkingApp {
             System.err.println("Parsing failed. Reason: " + exp.getMessage());
         }
 
+        // ==================== MODE SELECTION ====================
+        if ("customer-repro".equalsIgnoreCase(runConfiguration.mode)) {
+            System.out.println("Running CUSTOMER REPRODUCTION mode");
+            try {
+                CustomerReproduction.run(runConfiguration);
+            } catch (Exception e) {
+                System.err.println("Customer reproduction failed: " + e.getMessage());
+                e.printStackTrace();
+            }
+            System.exit(0);
+            return;
+        }
+        // ==================== END MODE SELECTION ====================
+
         for (ClientName client : runConfiguration.clients) {
             switch (client) {
                 case JEDIS:
@@ -136,22 +150,18 @@ public class BenchmarkingApp {
                         .hasArg(true)
                         .desc("Target transactions per second (0 = unlimited) [0]")
                         .build());
-
         options.addOption(
                 Option.builder()
                         .longOpt("operations")
                         .hasArg(true)
                         .desc("Operation type: all|read|write|delete [all]")
                         .build());
-
         options.addOption(
                 Option.builder()
                         .longOpt("warmupKeys")
                         .hasArg(true)
                         .desc("Number of keys to pre-populate for read benchmarks [100000]")
                         .build());
-
-        // ADD THESE NEW OPTIONS
         options.addOption(
                 Option.builder()
                         .longOpt("duration")
@@ -176,6 +186,39 @@ public class BenchmarkingApp {
                         .hasArg(false)
                         .desc("Enable TCP_NODELAY [false]")
                         .build());
+
+        // ==================== NEW OPTIONS ====================
+        options.addOption(
+                Option.builder()
+                        .longOpt("mode")
+                        .hasArg(true)
+                        .desc("Run mode: benchmark|customer-repro [benchmark]")
+                        .build());
+        options.addOption(
+                Option.builder()
+                        .longOpt("eventRate")
+                        .hasArg(true)
+                        .desc("(customer-repro) Events per second [5000]")
+                        .build());
+        options.addOption(
+                Option.builder()
+                        .longOpt("workerThreads")
+                        .hasArg(true)
+                        .desc("(customer-repro) Worker threads [60]")
+                        .build());
+        options.addOption(
+                Option.builder()
+                        .longOpt("delKeysPerEvent")
+                        .hasArg(true)
+                        .desc("(customer-repro) Keys to delete per event [3]")
+                        .build());
+        options.addOption(
+                Option.builder()
+                        .longOpt("delTimeoutMs")
+                        .hasArg(true)
+                        .desc("(customer-repro) DEL timeout in ms [1000]")
+                        .build());
+        // ==================== END NEW OPTIONS ====================
 
         return options;
     }
@@ -251,7 +294,7 @@ public class BenchmarkingApp {
                 case "write":
                     runConfiguration.operationType = OperationType.WRITE_ONLY;
                     break;
-                case "delete": // <-- ADD THIS
+                case "delete":
                     runConfiguration.operationType = OperationType.DELETE_ONLY;
                     break;
                 case "all":
@@ -259,7 +302,7 @@ public class BenchmarkingApp {
                     break;
                 default:
                     throw new ParseException(
-                            "Invalid operations type (" + ops + "), must be (all|read|write)");
+                            "Invalid operations type (" + ops + "), must be (all|read|write|delete)");
             }
         }
 
@@ -267,7 +310,6 @@ public class BenchmarkingApp {
             runConfiguration.warmupKeyCount = Integer.parseInt(line.getOptionValue("warmupKeys"));
         }
 
-        // ADD THESE NEW OPTION PARSERS
         if (line.hasOption("duration")) {
             runConfiguration.durationSeconds = Long.parseLong(line.getOptionValue("duration"));
         }
@@ -281,6 +323,28 @@ public class BenchmarkingApp {
                     Integer.parseInt(line.getOptionValue("metricsInterval"));
         }
 
+        // ==================== NEW OPTION PARSERS ====================
+        if (line.hasOption("mode")) {
+            runConfiguration.mode = line.getOptionValue("mode");
+        }
+
+        if (line.hasOption("eventRate")) {
+            runConfiguration.eventRate = Integer.parseInt(line.getOptionValue("eventRate"));
+        }
+
+        if (line.hasOption("workerThreads")) {
+            runConfiguration.workerThreads = Integer.parseInt(line.getOptionValue("workerThreads"));
+        }
+
+        if (line.hasOption("delKeysPerEvent")) {
+            runConfiguration.delKeysPerEvent = Integer.parseInt(line.getOptionValue("delKeysPerEvent"));
+        }
+
+        if (line.hasOption("delTimeoutMs")) {
+            runConfiguration.delTimeoutMs = Long.parseLong(line.getOptionValue("delTimeoutMs"));
+        }
+        // ==================== END NEW OPTION PARSERS ====================
+
         runConfiguration.tls = line.hasOption("tls");
         runConfiguration.clusterModeEnabled = line.hasOption("clusterModeEnabled");
         runConfiguration.minimal = line.hasOption("minimal");
@@ -293,26 +357,22 @@ public class BenchmarkingApp {
     private static int[] parseIntListOption(String line) throws ParseException {
         String lineValue = line;
 
-        // remove optional square brackets
         if (lineValue.startsWith("[") && lineValue.endsWith("]")) {
             lineValue = lineValue.substring(1, lineValue.length() - 1);
         }
 
-        // trim whitespace
         lineValue = lineValue.trim();
 
-        // check if it's the correct format
         if (!lineValue.matches("\\d+(\\s+\\d+)*")) {
             throw new ParseException("Invalid option: " + line);
         }
-        // split the string into a list of integers
         return Arrays.stream(lineValue.split("\\s+")).mapToInt(Integer::parseInt).toArray();
     }
 
     public enum ClientName {
-        JEDIS("Jedis"), // sync
-        LETTUCE("Lettuce"), // async
-        GLIDE("Glide"), // async
+        JEDIS("Jedis"),
+        LETTUCE("Lettuce"),
+        GLIDE("Glide"),
         ALL("All");
 
         private String name;
@@ -344,13 +404,21 @@ public class BenchmarkingApp {
         public boolean clusterModeEnabled;
         public boolean debugLogging = false;
         public boolean minimal = false;
-        public int targetTps = 0; // 0 = unlimited
-        public OperationType operationType = OperationType.ALL; // ADD THIS
-        public int warmupKeyCount = 100000; // ADD THIS - number of keys to pre-populate
-        public long durationSeconds = 0; // ADD THIS - 0 means use iterations
+        public int targetTps = 0;
+        public OperationType operationType = OperationType.ALL;
+        public int warmupKeyCount = 100000;
+        public long durationSeconds = 0;
         public String metricsOutputDir = "./metrics";
         public int metricsIntervalSeconds = 60;
-        public boolean tcpNoDelay = false; // ADD THIS
+        public boolean tcpNoDelay = false;
+
+        // ==================== NEW FIELDS ====================
+        public String mode = "benchmark";      // benchmark or customer-repro
+        public int eventRate = 5000;           // events/sec for customer-repro
+        public int workerThreads = 60;         // worker threads for customer-repro
+        public int delKeysPerEvent = 3;        // keys per DEL
+        public long delTimeoutMs = 1000;       // DEL timeout (customer uses 1000ms)
+        // ==================== END NEW FIELDS ====================
 
         public RunConfiguration() {
             configuration = "Release";
@@ -367,12 +435,12 @@ public class BenchmarkingApp {
             tls = false;
             clusterModeEnabled = false;
             minimal = false;
-            operationType = OperationType.ALL; // ADD THIS
-            warmupKeyCount = 100000; // ADD THIS
+            operationType = OperationType.ALL;
+            warmupKeyCount = 100000;
             durationSeconds = 0;
             metricsOutputDir = "./metrics";
             metricsIntervalSeconds = 60;
-            tcpNoDelay = false; // ADD THIS
+            tcpNoDelay = false;
         }
     }
 }
